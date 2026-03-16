@@ -100,3 +100,7 @@ temp/
 
 # ADK Samples
 /adk-samples/
+
+#ignore all the samples in the samples folder
+/samples/
+/docs/

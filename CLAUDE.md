@@ -1,349 +1,298 @@
-# CLAUDE.md
+# SpecTalk — Voice-Powered Project Creation for Meta Wearables
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## What This Project Is
 
----
+**SpecTalk** is an AI-powered project creation tool for Meta Ray-Ban glasses and AirPods.
+You talk to **Gervis** — the AI assistant inside SpecTalk — to design, spec, and ship real
+projects entirely hands-free. Search, Maps, and general conversation are supporting features;
+the core value is turning spoken ideas into executed projects.
 
-## Project Overview
+Built on:
 
-**SpecTalk** is a voice-first software creation system that keeps users in conversational flow while complex tasks run in the background. The architecture separates conversational orchestration from execution orchestration.
+- **Android app** (Kotlin, Jetpack Compose) — audio terminal, UI, push notifications
+- **Python backend** (FastAPI, Google ADK) on Google Cloud — owns the Gemini Live session,
+  all tools, all credentials, all conversation state
+- **Firebase Authentication** — email registration and login, issues product JWTs
+- **Cloud SQL (PostgreSQL)** — primary database for users, conversations, turns, jobs
+- **Gemini Live API** — real-time bidirectional voice, connected from the backend only
 
-### Core Design Principle
-> The user should be able to keep talking naturally while slow or complex work continues in the background.
+The phone never holds a Gemini API key. All voice intelligence lives in the backend.
 
-**Three major layers:**
-1. **Realtime Voice Runtime** — manages audio, turn-taking, interruption, and natural conversation
-2. **Control Plane** — manages jobs, memory, routing, approvals, and event flow
-3. **Execution Plane** — runs specialist teams, tools, builds, searches, and background work
+## Key Documents
 
-Key reference: `docs/workflow-08.03.26/spectalk_v_1_architecture_doc.md`
+| Document | Purpose |
+|----------|---------|
+| [`architecture.md`](./docs/architecture.md) | Full system design — read this before making any structural decision |
+| [`TODO.md`](./TODO.md) | Active phased delivery plan — update task status after each approval |
+| [`AGENTS.md`](./AGENTS.md) | To understand how to build Apps for Meta glasses |
 
----
+**Always check `architecture.md` before implementing anything.** Every major design decision is
+already documented there including the audio bridge protocol, WebSocket control messages, database
+schema, Google Cloud service map, authentication flow, and delivery phases.
 
-## Codebase Structure
+**Always update `TODO.md`** when a phase is approved and when tasks complete.
 
-### `voice_providers_sockets/`
-The realtime voice runtime layer. Each provider is a transport adapter.
+## Project Structure — Two Separate Repositories
 
-- **`amazon_websocket/`** — FastAPI WebSocket backend using Amazon Nova Sonic 2 (Bedrock)
-  - `main.py` — FastAPI app entry point with lifespan management
-  - `src/providers/nova_sonic.py` — Bedrock bidirectional streaming adapter
-  - `src/orchestrator_client.py` — HTTP client for control plane (POST /start, GET /status, POST /cancel)
-  - `src/ws_endpoints/websocket.py` — WebSocket handler for real-time voice
-  - `src/tools.py` — Tool registry for the voice agent
-  - `src/core_specs/` — Configuration and data loading
-  - `tests/` — unittest-based test suite
+The project is split into two independent codebases with their own repositories.
+They are developed, deployed, and versioned separately.
 
-- **`google_websocket/`** — Placeholder for Google Cloud voice provider (not yet implemented)
-
-### `scripts/`
-Utility and test scripts.
-
-- **`amazon_tests/`** — Examples and tests for Amazon voice provider integration
-- **`gemini_test/`** — Examples for Google Gemini API integration
-- **`utils/`** — Common utilities (logging, validation)
-
-### `docs/`
-Architecture and planning documentation.
-
-- **`workflow-08.03.26/`** — Complete SpecTalk v1 specification
-  - `spectalk_v_1_architecture_doc.md` — Core architectural principles and design
-  - `spectalk_orchestrator_specification.md` — Detailed orchestrator contract
-  - `spectalk_gcp_coding_execution_phases.md` — GCP execution layer implementation guide
-
----
-
-## Key Architectural Concepts
-
-### Voice Provider Pattern
-Each provider (Amazon, Google, etc.) implements the same contract:
-- `start_session(user_id, system_prompt)` — Initialize voice session
-- `send_audio_chunk(pcm_bytes)` — Stream audio input
-- `events()` — Async generator for response events
-- `end_session()` — Cleanup
-
-See: `voice_providers_sockets/amazon_websocket/src/providers/nova_sonic.py`
-
-### Control Plane Communication
-The voice runtime does NOT speak directly to users about execution. Instead:
-- Voice runtime submits work to control plane
-- Control plane routes to orchestrator
-- Orchestrator publishes structured events (job.created, job.progress, job.blocked, etc.)
-- Control plane decides what to tell Jarvis
-- Jarvis converts events into natural spoken responses
-
-See: `voice_providers_sockets/amazon_websocket/src/orchestrator_client.py` (simple reference implementation)
-
-### Capability Model
-Work is classified into types by execution latency:
-
-| Type | Latency | Example |
-|------|---------|---------|
-| `sync_tool` | <800ms | fetch memory, read config |
-| `async_job` | 1-4s | search, video generation |
-| `team_request` | 2-10s | dev team review |
-| `interactive_session` | unbounded | IDE control, shell bridge |
-
-Only jobs under ~800ms should happen inline in voice turns. Longer work becomes background jobs.
-
-### Jarvis (Single Persona)
-- The only voice assistant persona visible to users
-- Does NOT directly run slow tasks
-- Decides what to say, when, and how much to expose
-- Reads memory, retrieves status, asks the next useful question
-- Under strict turn budget: 0–500ms for immediate response, 0.5–2s with optional fast tool, >2s creates background job
-
----
-
-## Common Development Commands
-
-### Running the Amazon voice provider locally
-
-```bash
-cd voice_providers_sockets/amazon_websocket
-
-# Install dependencies (if needed)
-pip install -r requirements.txt  # if it exists
-# OR check .venv in gemini_test for reference setup
-
-# Set environment variables
-export ORCHESTRATOR_URL="http://localhost:8000"
-export ORCHESTRATOR_TOKEN="your-token"
-export AWS_REGION="us-east-1"
-export AWS_BEDROCK_MODEL_ID="amazon.nova-2-sonic-v1:0"
-
-# Run the server
-python main.py
-# Runs on configured port (see src/core_specs/configuration/config_loader.py)
+```
+MetaJarvisAPP/
+├── meta-wearables-dat-android/     ← ANDROID REPO (this repo)
+│   ├── app/                        ← Main Android app module (Gervis)
+│   ├── samples/
+│   │   ├── gemini-voice-agent/     ← REFERENCE: working voice agent (UI patterns)
+│   │   ├── gemini-test/
+│   │   └── openclaw-assistant/
+│   ├── mwdat-core/                 ← DAT SDK: device discovery, registration
+│   ├── mwdat-camera/               ← DAT SDK: StreamSession, VideoFrame
+│   ├── mwdat-mockdevice/           ← DAT SDK: testing without hardware
+│   ├── CLAUDE.md                   ← This file
+│   ├── architecture.md             ← Full system design (source of truth)
+│   ├── TODO.md                     ← Phased delivery plan
+│   ├── .gitignore
+│   └── .claude/
+│       ├── rules/dat-conventions.md ← Android/Kotlin conventions (always apply)
+│       └── skills/                  ← Available skills (see below)
+│
+└── gervis-backend/                 ← BACKEND REPO (created in Phase 2)
+    ├── main.py
+    ├── ws/
+    ├── agents/
+    ├── tools/
+    ├── services/
+    ├── db/
+    ├── auth/
+    ├── models/
+    ├── api/
+    ├── Dockerfile
+    ├── cloudbuild.yaml
+    ├── requirements.txt
+    ├── .env.example                ← Template only — never commit real .env
+    └── .gitignore
 ```
 
-### Running tests
+**Android repo** (`meta-wearables-dat-android`): Kotlin, Jetpack Compose, DAT SDK, Firebase Auth
+SDK, Vosk wake word. Deployed to Google Play / sideloaded to device.
+
+**Backend repo** (`gervis-backend`): Python, FastAPI, Google ADK, SQLAlchemy, Alembic. Deployed
+to Google Cloud Run. Contains all API keys via Secret Manager — never in source code.
+
+When working on the Android app, you are in `meta-wearables-dat-android/`.
+When working on the backend, switch to `gervis-backend/` (a sibling directory).
+
+## Reference Project: `samples/gemini-voice-agent`
+
+This is the working prototype that the new app is built from. Before building any new screen or
+UI component, read the equivalent implementation in this sample first.
+
+Key files to study:
+
+| File | What to learn from it |
+|------|----------------------|
+| `GeminiAgentViewModel.kt` | Session lifecycle, state management patterns |
+| `GeminiLiveClient.kt` | Will be replaced by `BackendVoiceClient` — read to understand what to replicate |
+| `AndroidAudioRecorder.kt` | Audio capture with AEC/NS/AGC — reuse this exactly |
+| `PcmAudioPlayer.kt` | Audio playback with interrupt handling — reuse this exactly |
+| `HotwordService.kt` | Wake-word detection with Vosk — reuse this exactly |
+| `MainActivity.kt` | Permission flow, app entry point |
+| UI composables | Animated orb, transcript display, status pills — use as design reference |
+
+The new app replaces `GeminiLiveClient` with `BackendVoiceClient` (WebSocket to backend).
+Everything else — audio capture, playback, wake word, UI patterns — is carried forward.
+
+## Reference Project: `samples/adk-samples/agents`
+
+Check this references when you need real examples how to build using gemini ADK you can use agents/bidi-demo or agents/realtime-conversational-agent
+
+## Available Skills
+
+Use these skills before writing code against any of the listed technologies. They provide
+current API documentation via `chub`, preventing errors from outdated training knowledge.
+
+### `/get-api-docs` — Universal API documentation fetcher
+**Use when:** writing code against any third-party SDK or API (Google ADK, Firebase Admin SDK,
+Cloud SQL, Cloud Tasks, SQLAlchemy, FastAPI, etc.)
 
 ```bash
-cd voice_providers_sockets/amazon_websocket
-
-# Run all tests
-python -m unittest discover tests -v
-
-# Run a specific test file
-python -m unittest tests.test_orchestrator_client -v
-
-# Run a specific test class
-python -m unittest tests.test_orchestrator_client.TestOrchestratorClient -v
+chub search "google adk"          # find the right doc ID
+chub get <id> --lang py           # fetch Python docs
 ```
 
-### Linting and validation
+Use this skill to fetch accurate Google ADK documentation before implementing the orchestrator,
+tools, or any ADK agent patterns. Do not rely on training knowledge for ADK — fetch the docs.
+
+### `/gemini-live-api-dev` — Gemini Live API (real-time bidirectional streaming)
+**Use when:** implementing the backend Gemini Live session in `gemini_live_client.py`, handling
+audio streaming, VAD configuration, transcription events, or session management.
+
+Key things this skill covers that are critical for this project:
+
+- The correct SDK is `google-genai` (Python) — **not** `google-generativeai` (deprecated)
+- Recommended model: `gemini-2.5-flash-native-audio-preview-12-2025`
+- Input audio: PCM 16kHz 16-bit mono — `audio/pcm;rate=16000`
+- Output audio: PCM 24kHz 16-bit mono
+- Use `send_realtime_input` for audio chunks, **not** `send_client_content`
+- Send `audioStreamEnd` when mic pauses
+- Clear audio queue on `interrupted` events
+
+**Important — Google ADK BidiGenerateContent:**
+Google ADK has native support for Gemini Live via `BidiGenerateContent` (bidirectional streaming
+over WebSocket). When implementing the backend voice agent with ADK, prefer the ADK-native Live
+session management over a raw WebSocket wrapper. Fetch the ADK docs with `/get-api-docs` to find
+the correct ADK Live agent pattern (`LiveRequestQueue`, streaming session handling). This avoids
+re-implementing session lifecycle management that ADK already handles.
+
+### `/gemini-api-dev` — Gemini API (standard, non-streaming)
+**Use when:** using Gemini for non-realtime tasks such as summarization, memory extraction,
+PRD generation, or any batch text/multimodal processing in backend tools.
+
+### DAT SDK skills (Android)
+These skills cover the Meta Wearables DAT SDK used in the Android app:
+
+| Skill | Use when |
+|-------|---------|
+| `/getting-started` | Setting up DAT SDK in a new Android module |
+| `/camera-streaming` | Working with `StreamSession` and `VideoFrame` |
+| `/session-lifecycle` | Handling stream pause, resume, stop |
+| `/permissions-registration` | Camera permission flows, Meta account registration |
+| `/mockdevice-testing` | Testing without physical Meta glasses |
+| `/debugging` | Diagnosing DAT SDK issues |
+| `/sample-app-guide` | Navigating the sample apps |
+
+## Coding Conventions
+
+### Android (Kotlin)
+
+All Android code must follow `.claude/rules/dat-conventions.md`. Key rules:
+
+- `suspend` functions for all async operations — no callbacks
+- `StateFlow` / `Flow` for observable state
+- `DatResult<T, E>` for error handling — never use `getOrThrow()`
+- `sealed interface` for state hierarchies
+- Naming: `*Manager` (long-lived), `*Session` (short-lived flow), `*Result`, `*Error`
+
+### Python Backend
+
+- Async everywhere: `async def`, `asyncio`, `asyncpg`, SQLAlchemy async engine
+- FastAPI for HTTP and WebSocket endpoints
+- Pydantic models for all request/response schemas
+- SQLAlchemy ORM models in `db/models.py`, Alembic for migrations
+- All secrets via environment variables injected from Secret Manager — never hardcoded
+- ADK patterns from official docs (fetch with `/get-api-docs`) — do not guess ADK API shapes
+
+### General
+
+- Read `architecture.md` before implementing any new feature
+- Follow the delivery phases in `TODO.md` — do not build Phase 3 features during Phase 1
+- Each phase requires explicit user approval before starting the next
+- Do not add features beyond the current phase scope
+
+## Build and Run
+
+### Android App
 
 ```bash
-# Check for common issues
-python -m pylint voice_providers_sockets/amazon_websocket/src
+# Build debug APK
+./gradlew assembleDebug
 
-# Validate configuration loading
-python -c "from src.core_specs.configuration.config_loader import config_loader; print(config_loader)"
+# Run tests
+./gradlew test
+
+# Install on connected device
+./gradlew installDebug
 ```
 
----
+See `.claude/commands/build.md` for the full build skill.
 
-## Architecture Decision Log
-
-### 1. Separate Conversational from Execution Orchestration
-The voice runtime should NOT block waiting for build tasks. Instead, conversational orchestration (Jarvis) is a separate concern from execution orchestration (Control Plane → Orchestrator → Runners).
-
-### 2. Single Assistant Persona
-Multiple specialist teams exist internally, but the user only sees "Jarvis." All internal reasoning is hidden; only synthesized questions and decisions reach the user.
-
-### 3. Event-Driven Status Model
-Rather than synchronous polling, background systems publish structured events (job.created, job.progress, job.blocked, job.completed). This decouples voice from execution and keeps Jarvis responsive.
-
-### 4. Distributed Workspace Model (v1+)
-For SpecTalk v1, repos live in ephemeral runners with persistent workspace directories. The control plane and orchestrator manage workspace lifecycle. This isolates dangerous coding operations from the public voice API.
-
-### 5. Provider Abstraction
-Voice providers (Nova Sonic, GPT-4o Realtime, Gemini Live) are swappable adapters. Each implements the same async contract. Configuration controls which provider is active.
-
----
-
-## Security and Trust Boundaries
-
-### Public Zone
-- Voice transports (WebSocket, WebRTC, Twilio)
-- User-facing session APIs
-- Client authentication
-
-### Private Control Zone
-- Control Plane (event routing, job management)
-- Token minting
-- Approval policy enforcement
-
-### Private Execution Zone
-- Isolated coding runners
-- Repository workspaces
-- Shell execution
-- Build tools
-
-**Key rule:** The public voice runtime must NEVER directly expose shell or git access. All execution happens through the control plane.
-
-See: `docs/workflow-08.03.26/spectalk_gcp_coding_execution_phases.md` (Phase 1)
-
----
-
-## Key Files and Responsibilities
-
-| File | Purpose |
-|------|---------|
-| `voice_providers_sockets/amazon_websocket/main.py` | FastAPI app setup; handles startup/shutdown lifecycle |
-| `src/providers/nova_sonic.py` | Bedrock bidirectional streaming; audio codec handling; session lifecycle |
-| `src/orchestrator_client.py` | Simple HTTP interface to build orchestrator; no logging of secrets |
-| `src/ws_endpoints/websocket.py` | WebSocket connection handler; speech-to-text/text-to-speech flow |
-| `src/tools.py` | Tool registry and execution; MCP server integration |
-| `src/core_specs/configuration/config_loader.py` | Environment-based config; read at startup, immutable at runtime |
-| `tests/test_orchestrator_client.py` | Mock-based unit tests for control plane communication |
-
----
-
-## Important Patterns
-
-### Configuration Management
-- All config loaded at startup from environment variables
-- Config is immutable at runtime
-- No hardcoded credentials; all secrets come from environment or secret manager
-- See: `src/core_specs/configuration/config_loader.py`
-
-### Logging
-- Custom logger with configurable handlers
-- Never log specs, tokens, or sensitive data (I6 compliance)
-- See: `src/utils/custom_logger.py`
-
-### Async/Streaming
-- Nova Sonic and similar providers use Python async/await
-- Events streamed via `asyncio.Queue` to avoid blocking
-- Test mocking uses `AsyncMock` for provider simulation
-
-### Test Patterns
-- Unit tests use `unittest` module with `unittest.mock`
-- No pytest dependency; uses standard library
-- Orchestrator client tests mock HTTP requests
-
----
-
-## Next Phases (From Architecture Doc)
-
-### Phase 2 — Control Plane Implementation
-- [ ] Job manager: intake, validation, state machine
-- [ ] Event bus: publish/subscribe for job events
-- [ ] Question arbiter: rank and filter questions to user
-- [ ] Session store: maintain conversation context
-
-### Phase 3 — Orchestrator (Execution Layer)
-- [ ] Runner selection and scheduling
-- [ ] Workspace binding and lifecycle
-- [ ] Job execution protocol (Claude Code / Codex launch)
-- [ ] Approval and blocker flow
-
-### Phase 4 — Dev Team (Specialist Workflow)
-- [ ] Planner: interpret request and define workstreams
-- [ ] Architecture/Security/Backend reviewers
-- [ ] Question synthesizer: merge findings into blocking questions
-- [ ] Spec patcher: incremental spec updates
-
-### Phase 5 — Google Cloud Voice (GCP)
-- [ ] Google Cloud Dialogflow or Gemini Live integration
-- [ ] Cloud Workstations or Compute Engine runner
-- [ ] Vertex AI authentication for Claude Code
-- [ ] Secret Manager integration for credentials
-
----
-
-## References
-
-### Core Architecture
-- `docs/workflow-08.03.26/spectalk_v_1_architecture_doc.md` — Primary design document
-- Positions SpecTalk as **event-driven, multi-runtime system** with three layers
-
-### Execution Layer
-- `docs/workflow-08.03.26/spectalk_orchestrator_specification.md` — Detailed orchestrator API
-- Specifies job schema, runner selection, workspace binding, state machine
-
-### GCP Implementation
-- `docs/workflow-08.03.26/spectalk_gcp_coding_execution_phases.md` — 16-phase GCP implementation guide
-- Covers base image, authentication, secret management, workspace durability
-
-### Helpful Concepts
-- **Latency Classes:** Sync vs async vs long-running work determines voice UX
-- **Turn Budget:** 0–500ms acknowledge, 0.5–2s one tool, >2s background job
-- **Capability Model:** Categorize work by type (sync_tool, async_job, team_request, interactive_session)
-- **Question Arbitration:** Not all internal questions reach the user; only the minimum blocking ones
-
----
-
-## Running First-Time Setup (Optional)
-
-If you're setting up the environment from scratch:
+### Backend (Phase 2+)
 
 ```bash
-# Clone repo (already done)
-cd voice_providers_sockets/amazon_websocket
+cd backend
 
-# Create virtual environment (if needed)
-python -m venv .venv
-source .venv/bin/activate  # or .\.venv\Scripts\activate on Windows
+# Install dependencies
+pip install -r requirements.txt
 
-# Install dependencies from requirements (if repo adds one later)
-# pip install -r requirements.txt
+# Run locally
+uvicorn main:app --reload --port 8080
 
-# Create .env file in project root with:
-# ORCHESTRATOR_URL=http://localhost:8000
-# ORCHESTRATOR_TOKEN=dev-token
-# AWS_REGION=us-east-1
-# AWS_BEDROCK_MODEL_ID=amazon.nova-2-sonic-v1:0
-# AWS_ACCESS_KEY_ID=... (from AWS account)
-# AWS_SECRET_ACCESS_KEY=... (from AWS account)
+# Run database migrations
+alembic upgrade head
 
-# Test configuration loads
-python -c "from src.core_specs.configuration.config_loader import config_loader; print('Config loaded OK')"
-
-# Run server
-python main.py
+# Run tests
+pytest
 ```
 
----
+## Google Cloud Services in Use
 
-## Troubleshooting
+All backend infrastructure runs on Google Cloud. See `architecture.md` > Google Cloud Deployment
+for the full service map, IAM roles, and configuration requirements.
 
-### Issue: "ORCHESTRATOR_URL is not set"
-- Check that environment variable `ORCHESTRATOR_URL` is exported before running the app
-- Orchestrator client expects this to be set (see `src/orchestrator_client.py` line 17-18)
+| Service | Purpose |
+|---------|---------|
+| Cloud Run | FastAPI backend (min 1 instance, 3600s timeout) |
+| Cloud SQL (PostgreSQL) | Primary database |
+| Firebase Authentication | Email registration and login |
+| Firebase Cloud Messaging | Push notifications to Android |
+| Secret Manager | All API keys and credentials |
+| Cloud Storage | Artifacts (code, images, 3D models) |
+| Cloud Tasks | Background job queue |
+| Artifact Registry | Docker images |
+| Cloud Build | CI/CD pipeline |
 
-### Issue: "Bedrock client initialization failed"
-- Verify AWS credentials are set: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
-- Check that Bedrock is available in your AWS region
-- Model ID defaults to `amazon.nova-2-sonic-v1:0` but can be overridden
+## Important Technical Notes
 
-### Issue: Tests fail with "No provider initialized"
-- Tests mock the provider; check `tests/test_orchestrator_client.py` for AsyncMock patterns
-- Ensure unittest imports are correct: `from unittest.mock import AsyncMock, patch`
+### Product Name vs Assistant Name
+The **product** is called **SpecTalk**. The **AI assistant** inside SpecTalk is called **Gervis**.
+These are distinct:
+- App name, store listing, splash screen, notifications: **SpecTalk**
+- Wake word, system instruction, spoken responses, assistant persona: **Gervis**
+- Example: "Welcome to SpecTalk. I'm Gervis. What would you like to build today?"
+- Never call the product "Gervis" and never call the assistant "SpecTalk"
 
----
+### Wake Word
+The default wake word is **"Hey Gervis"**. The user can change it in the app settings. The
+configured wake word is stored in `SharedPreferences` and read by `HotwordService` on every start.
+When implementing `HotwordService`, always read the wake word from settings — never hardcode it.
+The Vosk grammar is rebuilt at runtime with the current configured word(s).
 
-## Future Enhancements
+### Activation Sound
+When the wake word is detected, the app must play a short confirmation sound (beep or chime)
+through the active audio output (AirPods or Meta Glasses audio if connected, phone speaker
+otherwise) **before** opening the backend WebSocket. This tells the user the agent is now
+listening. The sound asset lives in `app/src/main/res/raw/`. Play it using `AudioTrack` or
+`SoundPool` on the same audio session as `PcmAudioPlayer` so it routes to the same output device.
 
-1. **Google Cloud Provider** — Implement Gemini Live / Dialogflow adapter in `google_websocket/`
-2. **Control Plane Service** — Separate service with job, event, memory, and approval APIs
-3. **Orchestrator Service** — Runner scheduling, workspace binding, execution coordination
-4. **Multi-Provider Fallback** — Try next provider if one fails during a turn
-5. **Approval Workflow** — Integration with control plane for dangerous operations
-6. **Memory Persistence** — Session, project, and long-term memory storage
-7. **Question Arbitration** — Rank and filter candidate questions from dev team
+### Inactivity Auto-Disconnect (10 seconds)
+When a voice session is active and no speech activity has occurred for 10 consecutive seconds,
+the app must automatically end the session:
+- "No activity" means: no `input_transcript` event and no `output_transcript` event received
+  in the last 10 seconds — i.e., neither the user nor Gemini has spoken
+- The 10s timer resets on every `input_transcript` or `output_transcript` event
+- On timeout: send `{"type": "end_of_speech"}` over the WebSocket, then close the connection
+- After closing, resume the `HotwordService` so the wake word listener reactivates normally
+- This timer lives in `VoiceAgentViewModel` as a `Job` that is cancelled and restarted on each
+  transcript event
+- Do not trigger auto-disconnect while audio is actively playing (`PcmAudioPlayer` is non-empty)
 
----
+### Audio Bridge (Backend ↔ Phone)
+The backend is in the audio hot path. The audio bridge in `voice_handler.py` must be zero-copy:
+forward raw PCM binary frames immediately, no buffering, no transcoding. See `architecture.md` >
+Voice Transport for the full latency and TCP_NODELAY requirements.
 
-## Final Notes
+### Interrupted Events
+When Gemini emits an `interrupted` event, the backend must forward `{"type": "interrupted"}` to
+the phone **before** any further audio. The phone must clear `PcmAudioPlayer` immediately. This
+is the single most important correctness requirement for smooth barge-in UX.
 
-SpecTalk's strength is keeping voice responsive while running complex background work. Every decision in this codebase should serve that goal:
-- Keep the voice loop fast (<2s for interaction)
-- Never block voice on slow work
-- Let users stay in the conversation while builds, searches, and planning happen
-- Feed back only the most useful status updates and questions
-- Make approvals and blockers feel natural in conversation
+### No Credentials on Phone
+The phone carries only a product JWT (from `POST /auth/session`). Firebase Auth SDK manages the
+Firebase ID token on-device. No Gemini key, no Google Maps key, no anything else. If you find
+yourself putting a credential in the Android app, stop and re-read `architecture.md`.
 
-The architecture is designed to scale into a multi-agent, multi-runner system while maintaining the illusion of a single, responsive assistant throughout.
+### Gemini ADK vs Raw WebSocket
+The backend does NOT use a raw WebSocket to Gemini. It uses the `google-genai` Python SDK
+(or ADK's built-in Live session support if available). Always fetch the current ADK docs with
+`/get-api-docs` before implementing. ADK's `BidiGenerateContent` / `LiveRequestQueue` patterns
+handle reconnection, context injection, and session lifecycle — use them.
