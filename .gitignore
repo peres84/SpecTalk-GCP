@@ -112,6 +112,9 @@ temp/
 # Firebase config — download from Firebase Console, never commit
 /android/app/google-services.json
 
+# Vosk model — large binary, download at build time, never commit
+/android/app/src/main/assets/model/
+
 # Gradle build outputs and caches
 /android/.gradle/
 /android/build/
