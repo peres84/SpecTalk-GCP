@@ -1,5 +1,11 @@
 package com.spectalk.app.ui.screens
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,10 +45,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.spectalk.app.auth.AuthUiState
@@ -50,6 +58,7 @@ import com.spectalk.app.auth.AuthViewModel
 import com.spectalk.app.conversations.ConversationItem
 import com.spectalk.app.conversations.HomeViewModel
 import com.spectalk.app.hotword.HotwordEventBus
+import com.spectalk.app.hotword.HotwordService
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -66,9 +75,35 @@ fun HomeScreen(
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     val homeState by homeViewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
-    // Refresh list every time the screen is entered (e.g. returning from a voice session)
-    LaunchedEffect(Unit) { homeViewModel.loadConversations() }
+    // Request RECORD_AUDIO (+ POST_NOTIFICATIONS on Android 13+) then start HotwordService.
+    // The service runs as a foreground service and keeps the wake word detector alive while
+    // the app is in the foreground or background (phone locked). If the app process is killed,
+    // the service restarts automatically next time the user opens the app to HomeScreen.
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        if (results[Manifest.permission.RECORD_AUDIO] == true) {
+            startHotwordService(context)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        homeViewModel.loadConversations()
+        val needed = buildList {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (needed.isEmpty()) {
+            startHotwordService(context)  // already granted — start immediately
+        } else {
+            permissionLauncher.launch(needed.toTypedArray())
+        }
+    }
 
     // Wake word detected → navigate to voice session automatically
     LaunchedEffect(Unit) {
@@ -131,6 +166,15 @@ fun HomeScreen(
                 }
             }
         }
+    }
+}
+
+// ── Hotword service ───────────────────────────────────────────────────────────
+
+private fun startHotwordService(context: android.content.Context) {
+    HotwordEventBus.resume()
+    runCatching {
+        context.startForegroundService(Intent(context, HotwordService::class.java))
     }
 }
 
