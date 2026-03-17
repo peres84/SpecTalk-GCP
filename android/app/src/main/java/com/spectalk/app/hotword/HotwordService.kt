@@ -97,9 +97,13 @@ class HotwordService : Service(), RecognitionListener {
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HotwordService::cpu")
             .also { it.acquire() }
 
-        val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        isBtHeadsetConnected = btManager?.adapter
-            ?.getProfileConnectionState(BluetoothProfile.HEADSET) == BluetoothProfile.STATE_CONNECTED
+        // BLUETOOTH_CONNECT is a runtime permission on API 31+. Use runCatching so a
+        // missing permission degrades gracefully — BT state tracking just won't work.
+        isBtHeadsetConnected = runCatching {
+            val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            btManager?.adapter
+                ?.getProfileConnectionState(BluetoothProfile.HEADSET) == BluetoothProfile.STATE_CONNECTED
+        }.getOrDefault(false)
 
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
@@ -114,25 +118,31 @@ class HotwordService : Service(), RecognitionListener {
                         if (!HotwordEventBus.isPaused.value && model != null) startListening()
                     }
                 } else {
-                    Log.i(TAG, "BT headset disconnected — stopping service.")
-                    stopListening()
-                    stopSelf()
+                    // BT disconnected — keep service running so phone mic takes over
+                    Log.i(TAG, "BT headset disconnected — continuing on phone mic.")
+                    serviceScope.launch {
+                        stopListening()
+                        delay(500)
+                        if (!HotwordEventBus.isPaused.value && model != null) startListening()
+                    }
                 }
             }
         }
         btReceiver = receiver
-        ContextCompat.registerReceiver(
-            this,
-            receiver,
-            IntentFilter(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED),
-            ContextCompat.RECEIVER_NOT_EXPORTED,
-        )
+        runCatching {
+            ContextCompat.registerReceiver(
+                this,
+                receiver,
+                IntentFilter(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+        }
 
         serviceScope.launch {
             HotwordEventBus.isPaused.collect { paused ->
                 if (paused) {
                     stopListening()
-                } else if (model != null && isBtHeadsetConnected) {
+                } else if (model != null) {
                     startListening()
                 }
             }
@@ -142,15 +152,11 @@ class HotwordService : Service(), RecognitionListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, buildNotification())
 
-        if (!isBtHeadsetConnected) {
-            Log.w(TAG, "No BT headset connected — service will idle until one connects.")
-        }
-
         if (model != null) {
             serviceScope.launch {
                 stopListening()
-                delay(1_200)
-                if (!HotwordEventBus.isPaused.value && isBtHeadsetConnected) startListening()
+                delay(300)
+                if (!HotwordEventBus.isPaused.value) startListening()
             }
         } else {
             serviceScope.launch { initVosk() }
@@ -184,7 +190,7 @@ class HotwordService : Service(), RecognitionListener {
             }
             model = Model(modelDir.absolutePath)
             Log.i(TAG, "Vosk model loaded.")
-            if (!HotwordEventBus.isPaused.value && isBtHeadsetConnected) startListening()
+            if (!HotwordEventBus.isPaused.value) startListening()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialise Vosk: ${e.message}")
         }
@@ -256,14 +262,14 @@ class HotwordService : Service(), RecognitionListener {
         Log.w(TAG, "Vosk error: ${e?.message}")
         serviceScope.launch {
             delay(1_500)
-            if (!HotwordEventBus.isPaused.value && model != null && isBtHeadsetConnected) {
+            if (!HotwordEventBus.isPaused.value && model != null) {
                 startListening()
             }
         }
     }
 
     override fun onTimeout() {
-        if (!HotwordEventBus.isPaused.value && isBtHeadsetConnected) startListening()
+        if (!HotwordEventBus.isPaused.value) startListening()
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
