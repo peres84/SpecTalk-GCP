@@ -8,6 +8,82 @@ Entries are ordered newest-first within each phase.
 ## Phase 3 — Voice Agent + Gemini Live
 > Status: 🔄 In Progress
 
+### [Phase 3.5] — Gemini API key test script
+**New file:** `scripts/test_gemini_key.py`
+
+Standalone script that verifies `GEMINI_API_KEY` from `.env` is valid and has access to both
+the standard Gemini API and the Gemini Live streaming API. Run with:
+
+```bash
+uv run python scripts/test_gemini_key.py
+```
+
+Three sequential checks:
+1. **Key present** — `GEMINI_API_KEY` is set and is not the placeholder value
+2. **Text generation** — calls `gemini-2.5-flash` via `generate_content`; confirms the key
+   authenticates and the API responds
+3. **Live session** — opens a real `runner.run_live()` bidi session with the native-audio model,
+   sends a text turn, waits up to 15s for at least one event back, then closes cleanly
+
+Exits with a clear `✗` message and non-zero code on the first failing check so it works in CI.
+
+---
+
+### [Phase 3.4] — Conversation delete endpoint + null summary fix + WebSocket error logging
+
+**`api/conversations.py`:**
+
+`DELETE /conversations/{conversation_id}` — new endpoint.
+Verifies the authenticated user owns the conversation, then deletes all child rows in FK-safe
+order before removing the conversation itself:
+`resume_events` → `pending_actions` → `turns` → `assets` → `jobs` → `conversation`.
+Returns `204 No Content`. No request body needed.
+
+`last_turn_summary: Optional[str] = None` — added explicit `= None` default to
+`ConversationSummary.last_turn_summary` (and `working_memory` in `ConversationDetail`,
+`text`/`event_type` in `TurnItem`). Pydantic v2 now reliably serializes unset Python `None`
+values as JSON `null` instead of omitting them or coercing to the string `"null"`.
+
+**`ws/voice_handler.py` — `_downstream_task` error surfacing:**
+
+The `try/except` block was previously inside the `async for` loop. If Gemini threw an exception
+on the very first iteration (e.g. invalid API key, quota exceeded, model not allowlisted), the
+error escaped the handler entirely and silently killed the task — producing `connection open` /
+`connection closed` in the log with no explanation.
+
+Fix: moved the `try/except` to wrap the entire `async for`. Errors from Gemini are now:
+- Logged at `ERROR` level with full `exc_info` stack trace
+- Forwarded to the phone as `{"type": "error", "message": "..."}` before the socket closes
+
+Also: after `asyncio.wait`, done tasks are now inspected for stored exceptions and logged, so
+any unexpected crash in either the upstream or downstream task appears in the log.
+
+---
+
+### [Phase 3.3] — Turns endpoint added
+**New endpoint:** `GET /conversations/{conversation_id}/turns`
+
+Added to `api/conversations.py` to support the Android Conversation History screen. Returns the
+ordered turn history for a conversation the authenticated user owns.
+
+**Response shape:**
+```json
+[
+  {
+    "turn_id": "uuid",
+    "role": "user",
+    "text": "What's the weather like?",
+    "event_type": "voice_transcript",
+    "created_at": "2026-03-17T14:23:01.123456"
+  }
+]
+```
+
+**Query params:** `?limit=100&offset=0` (max 500 per page). Turns are ordered oldest-first.
+Returns `404` if the conversation does not exist or belongs to a different user.
+
+---
+
 ### [Phase 3.2] — RunConfig compatibility fix
 **Problem:** `google-adk 1.1.1` uses a strict Pydantic model for `RunConfig` that rejects unknown
 fields. Passing `session_resumption` and `realtime_input_config` caused a `ValidationError` on

@@ -210,12 +210,16 @@ async def voice_websocket(
 
     # 3. Start ADK Live session for this connection
     try:
-        adk_session = await gemini_live_client.get_or_create_session(
+        await gemini_live_client.get_or_create_session(
             user_id=user_id,
             session_id=conversation_id,
         )
         live_request_queue = gemini_live_client.new_request_queue()
-        live_events = gemini_live_client.start_live_session(adk_session, live_request_queue)
+        live_events = gemini_live_client.start_live_session(
+            user_id=user_id,
+            session_id=conversation_id,
+            live_request_queue=live_request_queue,
+        )
     except Exception as e:
         logger.error(f"[{conversation_id}] Failed to start ADK session: {e}")
         await websocket.send_text(json.dumps({

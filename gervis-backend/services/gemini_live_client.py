@@ -91,11 +91,14 @@ class GeminiLiveClient:
             )
         return session
 
-    def start_live_session(self, session, live_request_queue: LiveRequestQueue):
+    def start_live_session(
+        self, user_id: str, session_id: str, live_request_queue: LiveRequestQueue
+    ):
         """Start a Gemini Live streaming session. Returns async generator of events."""
         run_config = _build_run_config()
         return self.runner.run_live(
-            session=session,
+            user_id=user_id,
+            session_id=session_id,
             live_request_queue=live_request_queue,
             run_config=run_config,
         )
