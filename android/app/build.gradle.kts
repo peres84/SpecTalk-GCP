@@ -45,6 +45,12 @@ android {
         // Required for libvosk.so — avoids Play Store 16 KB page-size alignment check
         jniLibs { useLegacyPackaging = true }
     }
+
+    // Skip compression on Vosk model files — they are already binary/compressed.
+    // Without this Gradle spends minutes trying to DEFLATE 68 MB of FST/mdl files.
+    androidResources {
+        noCompress += listOf("mdl", "fst", "int", "conf", "mat", "dubm", "ie", "stats")
+    }
 }
 
 dependencies {
