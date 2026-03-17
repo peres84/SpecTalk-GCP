@@ -13,8 +13,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -52,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.spectalk.app.voice.ConversationTurn
 import com.spectalk.app.voice.VoiceAgentViewModel
 import com.spectalk.app.voice.VoiceSessionUiState
 
@@ -310,66 +315,74 @@ private fun GervisOrb(uiState: VoiceSessionUiState) {
 
 @Composable
 private fun TranscriptArea(uiState: VoiceSessionUiState, modifier: Modifier = Modifier) {
-    Column(
+    val listState = rememberLazyListState()
+
+    // Auto-scroll to the latest turn whenever turns change
+    LaunchedEffect(uiState.turns.size) {
+        if (uiState.turns.isNotEmpty()) {
+            listState.animateScrollToItem(uiState.turns.lastIndex)
+        }
+    }
+
+    if (uiState.turns.isEmpty()) return
+
+    LazyColumn(
+        state = listState,
         modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(top = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        if (uiState.latestUserTranscript.isBlank() && uiState.latestAssistantTranscript.isBlank()) return@Column
-
-        Text(
-            text = "Conversation",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(top = 8.dp),
-        )
-
-        // User bubble — right-aligned
-        if (uiState.latestUserTranscript.isNotBlank()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                Text(
-                    text = uiState.latestUserTranscript,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier
-                        .widthIn(max = 290.dp)
-                        .clip(RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
-                        .border(
-                            1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.30f),
-                            RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
-                        )
-                        .padding(12.dp, 10.dp),
-                )
-            }
+        item {
+            Text(
+                text = "Conversation",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                fontWeight = FontWeight.SemiBold,
+            )
         }
+        items(uiState.turns) { turn -> TurnBubble(turn = turn) }
+    }
+}
 
-        // Assistant bubble — left-aligned
-        if (uiState.latestAssistantTranscript.isNotBlank()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Start,
-            ) {
-                Text(
-                    text = uiState.latestAssistantTranscript,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier
-                        .widthIn(max = 290.dp)
-                        .clip(RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .border(
-                            1.dp,
-                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f),
-                            RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp),
-                        )
-                        .padding(12.dp, 10.dp),
-                )
-            }
+@Composable
+private fun TurnBubble(turn: ConversationTurn) {
+    val isUser = turn.role == "user"
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+    ) {
+        if (isUser) {
+            Text(
+                text = turn.text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .widthIn(max = 290.dp)
+                    .clip(RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.30f),
+                        RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
+                    )
+                    .padding(12.dp, 10.dp),
+            )
+        } else {
+            Text(
+                text = turn.text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .widthIn(max = 290.dp)
+                    .clip(RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f),
+                        RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp),
+                    )
+                    .padding(12.dp, 10.dp),
+            )
         }
     }
 }

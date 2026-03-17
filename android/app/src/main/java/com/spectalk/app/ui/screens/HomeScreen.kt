@@ -49,6 +49,7 @@ import com.spectalk.app.auth.AuthUiState
 import com.spectalk.app.auth.AuthViewModel
 import com.spectalk.app.conversations.ConversationItem
 import com.spectalk.app.conversations.HomeViewModel
+import com.spectalk.app.hotword.HotwordEventBus
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -68,6 +69,17 @@ fun HomeScreen(
 
     // Refresh list every time the screen is entered (e.g. returning from a voice session)
     LaunchedEffect(Unit) { homeViewModel.loadConversations() }
+
+    // Wake word detected → navigate to voice session automatically
+    LaunchedEffect(Unit) {
+        if (HotwordEventBus.consumePendingWakeWord()) {
+            onNavigateToVoiceSession(null)
+            return@LaunchedEffect
+        }
+        HotwordEventBus.wakeWordDetected.collect {
+            onNavigateToVoiceSession(null)
+        }
+    }
 
     Scaffold(
         topBar = {

@@ -186,7 +186,9 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             is VoiceClientEvent.InputTranscript -> {
-                _uiState.update { it.copy(latestUserTranscript = event.text) }
+                _uiState.update { state ->
+                    state.copy(turns = upsertTurn(state.turns, "user", event.text))
+                }
                 resetInactivityTimer()
 
                 // "Goodbye" detected → end session hands-free
@@ -198,7 +200,9 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             is VoiceClientEvent.OutputTranscript -> {
-                _uiState.update { it.copy(latestAssistantTranscript = event.text) }
+                _uiState.update { state ->
+                    state.copy(turns = upsertTurn(state.turns, "assistant", event.text))
+                }
                 resetInactivityTimer()
             }
 
@@ -377,6 +381,24 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * Append or update the last turn in the list.
+     * If the last turn has the same role, update its text (streaming partial update).
+     * Otherwise append a new turn. This handles both incremental and final transcripts.
+     */
+    private fun upsertTurn(
+        turns: List<ConversationTurn>,
+        role: String,
+        text: String,
+    ): List<ConversationTurn> {
+        val last = turns.lastOrNull()
+        return if (last != null && last.role == role) {
+            turns.dropLast(1) + ConversationTurn(role, text)
+        } else {
+            turns + ConversationTurn(role, text)
+        }
+    }
 
     private fun getProductJwt(): String = tokenRepository.getProductJwt()
 
