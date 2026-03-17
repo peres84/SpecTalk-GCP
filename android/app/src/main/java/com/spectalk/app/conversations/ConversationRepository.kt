@@ -44,7 +44,8 @@ class ConversationRepository(private val http: OkHttpClient = defaultClient) {
                     ConversationItem(
                         id = obj.getString("conversation_id"),
                         state = obj.getString("state"),
-                        lastTurnSummary = obj.optString("last_turn_summary").takeIf { it.isNotBlank() },
+                        lastTurnSummary = obj.optString("last_turn_summary")
+                            .takeIf { it.isNotBlank() && it != "null" },
                         pendingResumeCount = obj.optInt("pending_resume_count", 0),
                         createdAt = obj.getString("created_at"),
                         updatedAt = obj.getString("updated_at"),
@@ -53,6 +54,19 @@ class ConversationRepository(private val http: OkHttpClient = defaultClient) {
             }
         }
     }
+
+    /**
+     * Delete a conversation. Returns true on success (204), false otherwise.
+     */
+    suspend fun deleteConversation(jwt: String, conversationId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("${BackendConfig.baseUrl}/conversations/$conversationId")
+                .delete()
+                .header("Authorization", "Bearer $jwt")
+                .build()
+            runCatching { http.newCall(request).execute().code in 200..299 }.getOrDefault(false)
+        }
 
     /**
      * Fetch turn history for a conversation, oldest-first (natural chat order).

@@ -50,6 +50,22 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deleteConversation(conversationId: String) {
+        val jwt = tokenRepository.getProductJwt()
+        if (jwt.isBlank()) return
+        // Optimistic remove
+        _uiState.update { it.copy(conversations = it.conversations.filterNot { c -> c.id == conversationId }) }
+        viewModelScope.launch {
+            val ok = runCatching { conversationRepository.deleteConversation(jwt, conversationId) }
+                .getOrDefault(false)
+            if (!ok) {
+                // Restore list on failure
+                Log.w(TAG, "Delete failed for $conversationId — reloading list")
+                loadConversations()
+            }
+        }
+    }
+
     fun clearError() {
         _uiState.update { it.copy(error = null) }
     }
