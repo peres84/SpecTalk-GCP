@@ -32,57 +32,60 @@ schema, Google Cloud service map, authentication flow, and delivery phases.
 
 **Always update `TODO.md`** when a phase is approved and when tasks complete.
 
-## Project Structure — Two Separate Repositories
+## Repository Structure
 
-The project is split into two independent codebases with their own repositories.
-They are developed, deployed, and versioned separately.
+This is a monorepo containing both the Android app and the Python backend, plus reference
+samples and documentation.
 
 ```
-MetaJarvisAPP/
-├── meta-wearables-dat-android/     ← ANDROID REPO (this repo)
-│   ├── app/                        ← Main Android app module (Gervis)
-│   ├── samples/
-│   │   ├── gemini-voice-agent/     ← REFERENCE: working voice agent (UI patterns)
-│   │   ├── gemini-test/
-│   │   └── openclaw-assistant/
-│   ├── mwdat-core/                 ← DAT SDK: device discovery, registration
-│   ├── mwdat-camera/               ← DAT SDK: StreamSession, VideoFrame
-│   ├── mwdat-mockdevice/           ← DAT SDK: testing without hardware
-│   ├── CLAUDE.md                   ← This file
-│   ├── architecture.md             ← Full system design (source of truth)
-│   ├── TODO.md                     ← Phased delivery plan
-│   ├── .gitignore
-│   └── .claude/
-│       ├── rules/dat-conventions.md ← Android/Kotlin conventions (always apply)
-│       └── skills/                  ← Available skills (see below)
+GeminiLiveAPI2026/               ← This repo root
+├── android/                     ← ANDROID PROJECT (Kotlin, Jetpack Compose)
+│   ├── app/                     ← Main Android app module (SpecTalk / Gervis)
+│   │   └── src/main/java/com/spectalk/app/
+│   │       ├── auth/            ← AuthViewModel, AuthUiState
+│   │       ├── navigation/      ← NavGraph, Screen
+│   │       └── ui/              ← screens/, theme/
+│   ├── settings.gradle.kts
+│   ├── build.gradle.kts
+│   ├── gradle.properties
+│   └── gradle/
+│       └── libs.versions.toml   ← Version catalog
 │
-└── gervis-backend/                 ← BACKEND REPO (created in Phase 2)
-    ├── main.py
-    ├── ws/
-    ├── agents/
-    ├── tools/
-    ├── services/
-    ├── db/
-    ├── auth/
-    ├── models/
-    ├── api/
-    ├── Dockerfile
-    ├── cloudbuild.yaml
-    ├── requirements.txt
-    ├── .env.example                ← Template only — never commit real .env
-    └── .gitignore
+├── gervis-backend/              ← PYTHON BACKEND (FastAPI, Google ADK)
+│   ├── main.py
+│   ├── config.py
+│   ├── auth/                    ← firebase.py, jwt_handler.py
+│   ├── api/                     ← auth.py (POST /auth/session), future routes
+│   ├── db/                      ← database.py, models.py
+│   ├── middleware/               ← auth.py (JWT dependency)
+│   ├── ws/                      ← voice_handler.py (Phase 3)
+│   ├── agents/                  ← orchestrator.py (Phase 3)
+│   ├── tools/                   ← search_tool.py, maps_tool.py (Phase 3)
+│   ├── services/                ← gemini_live_client.py (Phase 3)
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── .env.example             ← Template only — never commit real .env
+│
+├── samples/
+│   ├── gemini-voice-agent/      ← REFERENCE: working voice agent (UI patterns)
+│   └── adk-samples/             ← Google ADK reference samples
+│
+├── docs/                        ← architecture.md and other docs
+├── CLAUDE.md                    ← This file
+├── TODO.md                      ← Phased delivery plan
+└── README.md
 ```
 
-**Android repo** (`meta-wearables-dat-android`): Kotlin, Jetpack Compose, DAT SDK, Firebase Auth
-SDK, Vosk wake word. Deployed to Google Play / sideloaded to device.
+**Android project** (`android/`): Kotlin, Jetpack Compose, Firebase Auth SDK, Vosk wake word.
+Open `android/` as the project root in Android Studio. Deployed to Google Play / sideloaded.
 
-**Backend repo** (`gervis-backend`): Python, FastAPI, Google ADK, SQLAlchemy, Alembic. Deployed
+**Backend** (`gervis-backend/`): Python, FastAPI, Google ADK, SQLAlchemy, Alembic. Deployed
 to Google Cloud Run. Contains all API keys via Secret Manager — never in source code.
 
-When working on the Android app, you are in `meta-wearables-dat-android/`.
-When working on the backend, switch to `gervis-backend/` (a sibling directory).
+When working on the Android app, open `android/` as the project root.
+When working on the backend, work in `gervis-backend/`.
 
-## Reference Project: `samples/gemini-voice-agent`
+## Reference Project: `samples/gemini-voice-agent` (standalone Android project)
 
 This is the working prototype that the new app is built from. Before building any new screen or
 UI component, read the equivalent implementation in this sample first.
@@ -175,6 +178,9 @@ All Android code must follow `.claude/rules/dat-conventions.md`. Key rules:
 
 ### Python Backend
 
+- **Package manager: `uv` only** — never use `pip install`. Use `uv sync` to install deps,
+  `uv run <cmd>` to run scripts, `uv add <pkg>` to add packages. Dependencies live in
+  `pyproject.toml`, not `requirements.txt`.
 - Async everywhere: `async def`, `asyncio`, `asyncpg`, SQLAlchemy async engine
 - FastAPI for HTTP and WebSocket endpoints
 - Pydantic models for all request/response schemas
@@ -193,7 +199,11 @@ All Android code must follow `.claude/rules/dat-conventions.md`. Key rules:
 
 ### Android App
 
+Open `android/` as the project root in Android Studio, then:
+
 ```bash
+cd android
+
 # Build debug APK
 ./gradlew assembleDebug
 
@@ -204,24 +214,22 @@ All Android code must follow `.claude/rules/dat-conventions.md`. Key rules:
 ./gradlew installDebug
 ```
 
-See `.claude/commands/build.md` for the full build skill.
-
 ### Backend (Phase 2+)
 
 ```bash
-cd backend
+cd gervis-backend
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (always use uv — never pip install)
+uv sync
 
 # Run locally
-uvicorn main:app --reload --port 8080
+uv run uvicorn main:app --reload --port 8080
 
 # Run database migrations
-alembic upgrade head
+uv run alembic upgrade head
 
 # Run tests
-pytest
+uv run pytest
 ```
 
 ## Google Cloud Services in Use

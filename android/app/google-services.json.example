@@ -1,0 +1,5 @@
+{
+  "_comment": "Replace this file with your actual google-services.json from Firebase Console.",
+  "_comment2": "Go to Firebase Console > Project Settings > Your apps > Download google-services.json",
+  "_comment3": "Place the downloaded file at app/google-services.json (never commit it to git)"
+}

@@ -1,0 +1,11 @@
+package com.spectalk.app.navigation
+
+sealed interface Screen {
+    val route: String
+
+    data object Splash : Screen { override val route = "splash" }
+    data object Login : Screen { override val route = "login" }
+    data object Register : Screen { override val route = "register" }
+    data object Home : Screen { override val route = "home" }
+    data object Settings : Screen { override val route = "settings" }
+}

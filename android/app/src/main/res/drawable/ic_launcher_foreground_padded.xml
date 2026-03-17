@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Wraps the Gervis PNG with inset so the content sits inside the adaptive icon safe zone.
+     The safe zone is the center 72dp of the 108dp canvas — 18dp inset on each side. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:drawable="@drawable/gervis_icon"
+        android:top="20dp"
+        android:bottom="20dp"
+        android:left="20dp"
+        android:right="20dp" />
+</layer-list>

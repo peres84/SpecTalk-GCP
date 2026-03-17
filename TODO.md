@@ -12,7 +12,7 @@ Reference: [`architecture.md`](./architecture.md) — source of truth for all de
 ---
 
 ## Phase 0 — Android App: Authentication UI
-**Status: `🔲 NOT STARTED`**
+**Status: `✅ APPROVED`**
 
 Goal: A polished **SpecTalk** Android app with registration, login, and a placeholder home
 screen. No backend yet — Firebase Authentication runs client-side only. This phase proves the
@@ -22,56 +22,60 @@ Reference for UI patterns: `samples/gemini-voice-agent/`
 
 ### Tasks
 
-- [ ] Create new Android app module (or clean up existing app module for production use)
-- [ ] Add Firebase Authentication dependency (`firebase-auth-ktx`)
-- [ ] Add Google Services plugin and `google-services.json`
-- [ ] Design and implement **Splash / Onboarding screen**
-      - App logo, brief tagline
-      - "Sign in" and "Create account" CTAs
-- [ ] Design and implement **Registration screen**
-      - Email + password fields
-      - Confirm password field
-      - "Create account" button
+- [x] Create new Android app module (`android/` — Kotlin, Jetpack Compose, Material3)
+- [x] Add Firebase Authentication dependency (`firebase-auth`, Firebase BOM 34.10.0)
+- [x] Add Google Services plugin (`4.4.4`) and `google-services.json`
+- [x] Design and implement **Splash / Onboarding screen**
+      - Gervis mascot icon + "SpecTalk" wordmark + "Powered by Gervis" gold label
+      - Auto-routes to Home (authenticated) or Login (unauthenticated)
+      - Fade-in animation
+- [x] Design and implement **Registration screen**
+      - Email + password + confirm password fields
+      - "Create Account" button + "Continue with Google" button
       - Error states (invalid email, weak password, email already in use)
       - Link to login screen
       - Email verification sent confirmation state
-- [ ] Design and implement **Login screen**
+- [x] Design and implement **Login screen**
       - Email + password fields
-      - "Sign in" button
-      - "Forgot password?" link → Firebase password reset flow
+      - "Sign in" button + "Continue with Google" button
+      - "Forgot password?" dialog → Firebase password reset flow
       - Error states (wrong credentials, unverified email)
       - Link to registration screen
-- [ ] Firebase Auth integration
+- [x] Firebase Auth integration
       - `createUserWithEmailAndPassword`
       - `sendEmailVerification` after registration
       - `signInWithEmailAndPassword`
       - `sendPasswordResetEmail`
       - Persist auth state across app restarts (Firebase SDK handles this automatically)
       - Sign out
-- [ ] Design and implement **Home / Conversation List screen** (empty state only)
-      - Top bar with user avatar / email and sign-out button
-      - Empty state illustration and copy ("No conversations yet")
-      - FAB or button to start a new conversation (non-functional placeholder in this phase)
-      - Bottom navigation if needed
-- [ ] Navigation graph wiring (Splash → Login/Register → Home)
+- [x] **Google Sign-In** (via Jetpack Credential Manager + Firebase)
+      - SHA-1 fingerprint registered in Firebase Console
+      - Web Client ID configured in `res/values/strings.xml`
+- [x] Design and implement **Home / Conversation List screen** (empty state only)
+      - TopAppBar with settings icon and sign-out button
+      - Empty state copy ("No conversations yet — Say Hey Gervis or tap +")
+      - FAB placeholder for future voice session
+- [x] Navigation graph wiring (Splash → Login/Register → Home → Settings)
 - [ ] Handle deep link from email verification back into the app
-- [ ] Basic theming: colors, typography, dark mode support
-- [ ] **Settings screen**
+- [x] Branding: Metallic red + gold color system, dark/light Material3 theme, warm surfaces
+- [x] **Settings screen**
       - Wake word field: text input, default `"Hey Gervis"`
       - Persisted to `SharedPreferences` (key: `pref_wake_word`)
       - Accessible from the Home screen top bar
-      - Change takes effect the next time `HotwordService` starts (no live reload needed in v1)
 
 ### Acceptance Criteria
 
-- User can register with email and password
-- User receives a verification email and must verify before accessing Home
-- User can log in and is taken to the Home screen
-- User can reset their password via email
-- Auth state persists across app restarts (already logged in = goes straight to Home)
-- UI is polished and consistent — not placeholder-quality
+- [x] User can register with email and password
+- [x] User receives a verification email and must verify before accessing Home
+- [x] User can log in and is taken to the Home screen
+- [x] User can sign in with Google (one tap)
+- [x] User can reset their password via email
+- [x] Auth state persists across app restarts (already logged in = goes straight to Home)
+- [x] UI is polished and consistent — metallic red/gold brand, dark/light mode
 
-### ⏸ Awaiting approval to proceed to Phase 1
+### Notes
+- `android/docs/branding.md` — full color palette, mascot, icon, typography guide
+- `android/docs/authentication.md` — Firebase setup, Google Sign-In, SHA-1 instructions
 
 ---
 
@@ -150,7 +154,7 @@ Reference for all UI and audio components: `samples/gemini-voice-agent/`
 ---
 
 ## Phase 2 — Backend: Foundation
-**Status: `🔲 NOT STARTED`**
+**Status: `🔄 IN PROGRESS`**
 
 Goal: A deployable Python backend on Google Cloud with authentication, database, and all
 infrastructure in place. No Gemini yet — just the foundation.
@@ -164,38 +168,35 @@ infrastructure in place. No Gemini yet — just the foundation.
 - [ ] Create Cloud SQL PostgreSQL instance (same region as planned users)
 - [ ] Create Cloud Storage artifacts bucket
 - [ ] Create Cloud Tasks queue (`backend-jobs`)
-- [ ] Configure Firebase project: enable Email/Password sign-in, add Android app
+- [x] Configure Firebase project: enable Email/Password + Google sign-in, add Android app
 - [ ] Add all secrets to Secret Manager:
       `GEMINI_API_KEY`, `JWT_SECRET`, `DATABASE_URL`, `GOOGLE_MAPS_API_KEY`,
       `GOOGLE_SEARCH_API_KEY`, `OPENCLAW_API_KEY`
 - [ ] Create Cloud Run service account with correct IAM roles (see `architecture.md`)
 - [ ] Create Artifact Registry repository for Docker images
-- [ ] Create `backend/` directory in repo
+- [x] Create `gervis-backend/` directory in repo
 
 #### Backend Code
-- [ ] `main.py` — FastAPI app, lifespan (DB pool init), router registration
-- [ ] `db/database.py` — SQLAlchemy async engine, session factory, Cloud SQL connector
-- [ ] `db/models.py` — ORM models: `User`, `Conversation`, `Turn`, `Job`, `PendingAction`,
-      `ResumeEvent`, `Asset`
+- [x] `main.py` — FastAPI app, lifespan (DB pool init), router registration, CORS
+- [x] `config.py` — Pydantic settings, reads from `.env`
+- [x] `db/database.py` — SQLAlchemy async engine, session factory
+- [x] `db/models.py` — `User` ORM model (firebase_uid, email, display_name, timestamps)
 - [ ] `db/migrations/` — Alembic setup, initial migration with full schema
-- [ ] `auth/firebase.py` — Firebase Admin SDK init, `verify_firebase_token(id_token) → uid`
-- [ ] `auth/jwt.py` — `sign_product_jwt(user_id, email) → str`, `verify_product_jwt(token) → dict`
-- [ ] `api/auth.py` — `POST /auth/session`: verify Firebase token, create/fetch user, return JWT
-- [ ] `api/voice.py` — `POST /voice/session/start` stub (returns conversation_id, no Gemini yet)
-- [ ] `api/conversations.py` — `GET /conversations`, `GET /conversations/{id}`,
-      `GET /conversations/{id}/turns`, `GET /conversations/{id}/resume-events`,
-      `POST /conversations/{id}/pending-turn`, `POST /conversations/{id}/ack-resume-event`,
-      `POST /conversations/{id}/close`
+- [x] `auth/firebase.py` — Firebase Admin SDK init, `verify_firebase_token(id_token)`
+- [x] `auth/jwt_handler.py` — `sign_product_jwt`, `verify_product_jwt` (python-jose)
+- [x] `api/auth.py` — `POST /auth/session`: verify Firebase token, upsert user, return JWT
+- [ ] `api/voice.py` — `POST /voice/session/start` stub
+- [ ] `api/conversations.py` — conversation CRUD endpoints
 - [ ] `api/jobs.py` — `GET /jobs/{job_id}`
-- [ ] `api/notifications.py` — `POST /notifications/device/register` (store FCM token)
-- [ ] JWT middleware — validate `Authorization: Bearer <jwt>` on all protected routes
-- [ ] `Dockerfile` — production-ready image
+- [ ] `api/notifications.py` — `POST /notifications/device/register`
+- [x] `middleware/auth.py` — `require_auth` dependency, validates Bearer JWT on protected routes
+- [x] `Dockerfile` — production-ready image (uv-based, python 3.12-slim)
 - [ ] Cloud Build `cloudbuild.yaml` — build → push → migrate → deploy pipeline
-- [ ] `requirements.txt` / `pyproject.toml`
+- [x] `pyproject.toml` — dependencies managed with `uv`
 
 #### Android: Wire Auth to Real Backend
 - [ ] Update `POST /auth/session` call in Android app to hit real Cloud Run URL
-- [ ] Store product JWT securely (Android Keystore / EncryptedSharedPreferences)
+- [ ] Store product JWT securely (EncryptedSharedPreferences)
 - [ ] Use product JWT on all API calls
 
 ### Acceptance Criteria
