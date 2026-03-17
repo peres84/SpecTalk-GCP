@@ -57,11 +57,17 @@ import com.spectalk.app.voice.VoiceSessionUiState
 
 @Composable
 fun VoiceSessionScreen(
+    conversationId: String?,
     onNavigateBack: () -> Unit,
     viewModel: VoiceAgentViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Auto-start session when screen opens (either new or resuming existing conversation)
+    LaunchedEffect(conversationId) {
+        viewModel.startSession(conversationId)
+    }
 
     LaunchedEffect(uiState.recentError) {
         uiState.recentError?.let { message ->

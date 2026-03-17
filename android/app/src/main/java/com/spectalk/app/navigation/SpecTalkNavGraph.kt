@@ -4,9 +4,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.spectalk.app.auth.AuthViewModel
 import com.spectalk.app.ui.screens.HomeScreen
 import com.spectalk.app.ui.screens.LoginScreen
@@ -66,7 +68,9 @@ fun SpecTalkNavGraph() {
             HomeScreen(
                 authViewModel = authViewModel,
                 onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                onNavigateToVoiceSession = { navController.navigate(Screen.VoiceSession.route) },
+                onNavigateToVoiceSession = { conversationId ->
+                    navController.navigate(Screen.VoiceSession.routeWith(conversationId))
+                },
                 onSignOut = {
                     navController.navigate(Screen.Login.route) {
                         popUpTo(Screen.Home.route) { inclusive = true }
@@ -81,9 +85,20 @@ fun SpecTalkNavGraph() {
             )
         }
 
-        composable(Screen.VoiceSession.route) {
+        composable(
+            route = Screen.VoiceSession.route,
+            arguments = listOf(
+                navArgument("conversationId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            ),
+        ) { backStackEntry ->
+            val conversationId = backStackEntry.arguments?.getString("conversationId")
             VoiceSessionScreen(
-                onNavigateBack = { navController.popBackStack() }
+                conversationId = conversationId,
+                onNavigateBack = { navController.popBackStack() },
             )
         }
     }

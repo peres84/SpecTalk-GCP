@@ -123,10 +123,12 @@ Reference for all UI and audio components: `samples/gemini-voice-agent/`
       - Connection status pill
       - Manual disconnect button
       - "Goodbye" detection → auto disconnect
-- [ ] **Conversation List screen** (functional)
+- [x] **Conversation List screen** (functional)
       - Show conversation items with summary and timestamp
-      - Badge for pending resume events (populated once backend exists)
-      - Tap to open/resume a conversation
+      - Badge for pending resume events
+      - Tap to open/resume a conversation (passes conversationId to VoiceSessionScreen)
+      - Pull-to-refresh, empty state, relative timestamps
+      - State chip (active / resume / working / idle)
 - [x] **Inactivity auto-disconnect (10 seconds)**
       - In `VoiceAgentViewModel`, maintains a `Job` inactivity timer
       - Timer starts when the voice session becomes active
