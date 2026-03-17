@@ -123,11 +123,11 @@ async def _downstream_task(
 
     CRITICAL: interrupted events are sent BEFORE any further audio.
     """
-    async for event in live_events:
-        if websocket.client_state != WebSocketState.CONNECTED:
-            break
+    try:
+        async for event in live_events:
+            if websocket.client_state != WebSocketState.CONNECTED:
+                break
 
-        try:
             # CRITICAL: Handle interrupted FIRST — clear phone audio buffer immediately
             if event.interrupted:
                 await websocket.send_text(json.dumps({"type": "interrupted"}))
@@ -148,7 +148,6 @@ async def _downstream_task(
                             "text": part.text,
                             "is_partial": bool(event.partial),
                         }))
-                        # Persist final user turns
                         if not event.partial:
                             asyncio.create_task(
                                 persist_turn(conversation_id, "user", part.text, "voice_transcript")
@@ -160,7 +159,6 @@ async def _downstream_task(
                             "text": part.text,
                             "is_partial": bool(event.partial),
                         }))
-                        # Persist final assistant turns
                         if not event.partial:
                             asyncio.create_task(
                                 persist_turn(conversation_id, "assistant", part.text, "voice_transcript")
@@ -173,11 +171,16 @@ async def _downstream_task(
             if event.turn_complete:
                 await websocket.send_text(json.dumps({"type": "turn_complete"}))
 
-        except WebSocketDisconnect:
-            break
-        except Exception as e:
-            logger.error(f"[{conversation_id}] downstream_task error: {e}")
-            break
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        # This catches errors from Gemini itself (auth failure, quota, bad model name, etc.)
+        # that are thrown when the async generator produces its first item.
+        logger.error(f"[{conversation_id}] Gemini Live session error: {e}", exc_info=True)
+        try:
+            await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
+        except Exception:
+            pass
 
 
 @router.websocket("/voice/{conversation_id}")
@@ -234,12 +237,19 @@ async def voice_websocket(
     )
 
     try:
-        await asyncio.wait(
+        done, _ = await asyncio.wait(
             [upstream, downstream],
             return_when=asyncio.FIRST_COMPLETED,
         )
+        # Surface any exception that ended a task (e.g. Gemini auth failure)
+        for task in done:
+            if task.exception():
+                logger.error(
+                    f"[{conversation_id}] Task failed: {task.exception()}",
+                    exc_info=task.exception(),
+                )
     except Exception as e:
-        logger.error(f"[{conversation_id}] Session error: {e}")
+        logger.error(f"[{conversation_id}] Session error: {e}", exc_info=True)
     finally:
         # Clean up tasks
         upstream.cancel()

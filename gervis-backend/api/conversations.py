@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from typing import Optional
 
 from db.database import get_db
-from db.models import Conversation, Turn
+from db.models import Conversation, Turn, Job, PendingAction, ResumeEvent, Asset
 from middleware.auth import require_auth
 
 import uuid
@@ -16,14 +16,14 @@ router = APIRouter()
 class ConversationSummary(BaseModel):
     conversation_id: str
     state: str
-    last_turn_summary: Optional[str]
+    last_turn_summary: Optional[str] = None  # explicit None default — serializes as JSON null
     pending_resume_count: int
     created_at: str
     updated_at: str
 
 
 class ConversationDetail(ConversationSummary):
-    working_memory: Optional[dict]
+    working_memory: Optional[dict] = None
 
 
 @router.get("", response_model=list[ConversationSummary])
@@ -86,11 +86,47 @@ async def get_conversation(
     )
 
 
+@router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_conversation(
+    conversation_id: str,
+    payload: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a conversation and all its child records. User must own it."""
+    user_id = uuid.UUID(payload["sub"])
+    try:
+        conv_id = uuid.UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    # Verify ownership before touching anything
+    result = await db.execute(
+        select(Conversation.id).where(
+            Conversation.id == conv_id,
+            Conversation.user_id == user_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    # Delete child rows in FK-safe order:
+    # resume_events → pending_actions → turns → assets → jobs → conversation
+    await db.execute(delete(ResumeEvent).where(ResumeEvent.conversation_id == conv_id))
+    await db.execute(delete(PendingAction).where(PendingAction.conversation_id == conv_id))
+    await db.execute(delete(Turn).where(Turn.conversation_id == conv_id))
+    await db.execute(delete(Asset).where(Asset.conversation_id == conv_id))
+    await db.execute(delete(Job).where(Job.conversation_id == conv_id))
+    await db.execute(delete(Conversation).where(Conversation.id == conv_id))
+    await db.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 class TurnItem(BaseModel):
     turn_id: str
     role: str
-    text: Optional[str]
-    event_type: Optional[str]
+    text: Optional[str] = None
+    event_type: Optional[str] = None
     created_at: str
 
 
