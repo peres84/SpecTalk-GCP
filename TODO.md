@@ -212,7 +212,7 @@ infrastructure in place. No Gemini yet — just the foundation.
 ---
 
 ## Phase 3 — Backend: Voice Agent + Gemini Live
-**Status: `🔄 IN PROGRESS`**
+**Status: `🔄 IN PROGRESS — awaiting approval`**
 
 Goal: The backend becomes the full voice agent. Gemini Live session runs server-side. The audio
 WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `maps_tool` work.
@@ -223,9 +223,11 @@ WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `
 - [x] `services/gemini_live_client.py`
       - ADK-native LiveRequestQueue + InMemoryRunner pattern
       - Model: `gemini-2.5-flash-native-audio-preview-12-2025`
-      - VAD: START_SENSITIVITY_LOW, END_SENSITIVITY_LOW, silenceDurationMs: 320
+      - VAD: START_SENSITIVITY_LOW, END_SENSITIVITY_LOW, silenceDurationMs: 320 (activates on ADK upgrade)
       - inputAudioTranscription + outputAudioTranscription enabled
-      - Session resumption with transparent=True
+      - Session resumption with transparent=True (activates on ADK upgrade)
+      - RunConfig fields injected conditionally — forward-compatible with future ADK versions
+      - Deprecated `run_live(session=)` API replaced with `run_live(user_id=, session_id=)`
 - [x] `services/audio_session_manager.py`
       - Per-conversation SessionEntry tracking
       - 30s grace period on phone disconnect (cancels on reconnect)
@@ -235,36 +237,56 @@ WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `
       - Binary PCM forwarding: phone → ADK (zero-copy via send_realtime)
       - Binary PCM forwarding: ADK audio events → phone (zero-copy)
       - `interrupted` forwarded to phone BEFORE any audio (critical for barge-in UX)
-      - Handles `end_of_speech` and `image` control messages from phone
+      - Handles `image` control messages from phone
       - `turn_complete`, `input_transcript`, `output_transcript` JSON events to phone
+      - Gemini errors surfaced as `{"type":"error","message":"..."}` before socket closes
+      - Task exceptions after `asyncio.wait` logged at ERROR level with full stack trace
 - [x] `services/conversation_service.py`
       - `persist_turn()` — persists user/assistant turns from transcription events
       - `set_conversation_active()` / `set_conversation_idle()` — state transitions
 
 #### Backend — Orchestrator Agent
 - [x] `agents/orchestrator.py`
-      - ADK Agent (Gervis) with full personality system instruction
-      - Tools: google_search (ADK built-in), find_nearby_places (Maps API)
-- [x] `tools/search_tool.py` — ADK built-in google_search re-export
-- [x] `tools/maps_tool.py` — Google Maps Places Text Search, returns spoken_summary + places list
+      - ADK Agent (Gervis) with full personality + voice UX system instruction
+      - Tools: google_search (ADK built-in native grounding), find_nearby_places (Maps grounding)
+- [x] `tools/search_tool.py` — ADK built-in google_search (native Search grounding, no separate key)
+- [x] `tools/maps_tool.py` — native Maps grounding via `types.GoogleMaps()`, returns spoken_summary
+
+#### Backend — Conversations API (added during Phase 3)
+- [x] `GET /conversations/{id}/turns` — paginated turn history (`?limit=100&offset=0`)
+- [x] `DELETE /conversations/{id}` — FK-safe cascade delete (resume_events → pending_actions → turns → assets → jobs → conversation)
+- [x] `last_turn_summary` null serialization fix — explicit `Optional[str] = None` defaults in Pydantic models
+
+#### Backend — Bug Fixes (ADK 1.1.1 compatibility)
+- [x] `RunConfig` Pydantic validation — unknown fields (`session_resumption`, `realtime_input_config`) injected conditionally via `model_fields` inspection
+- [x] `types.ActivityEnd()` crash — removed `send_realtime(ActivityEnd())` call; ADK 1.1.1 only accepts `types.Blob` in `send_realtime`; VAD handles silence detection
+- [x] `find_nearby_places` schema warnings — removed `latitude`/`longitude` params; ADK cannot represent default values in Gemini function schemas
+- [x] `Optional[float]` parse error — ADK automatic function calling cannot parse Union types
+
+#### Setup
+- [x] `GEMINI_API_KEY` added to `gervis-backend/.env` — validated via `scripts/test_gemini_key.py`
+- [x] `GOOGLE_MAPS_API_KEY` not required — Maps grounding uses only `GEMINI_API_KEY`
+
+#### Tooling / Docs
+- [x] `scripts/test_gemini_key.py` — 3-check validation: key present → text generation → live bidi session
+- [x] `docs/phase3-testing.md` — step-by-step testing checklist for Phase 3 approval
+- [x] `CHANGELOG.md` — full change history for all Phase 3 work
 
 #### Android — Connect to Real Backend Voice WebSocket
-- [ ] Verify `BackendVoiceClient` JWT auth — passes token via Authorization header on upgrade
-- [ ] Set `BackendConfig.wsBaseUrl` to real Cloud Run WebSocket URL before end-to-end test
+- [x] `BackendVoiceClient` JWT auth — token passed via Authorization header on WebSocket upgrade
+- [x] `BackendConfig.wsBaseUrl` pointing to local backend for testing
+- [x] End-to-end voice session working: phone mic → backend → ADK/Gemini → backend → phone speaker
+- [ ] Set `BackendConfig.wsBaseUrl` to Cloud Run URL before production deploy
 - [ ] Remove any temporary direct Gemini connection from Phase 1 (if present)
-- [ ] Test full end-to-end: phone mic → backend → ADK/Gemini → backend → phone speaker
-
-#### Setup required before testing
-- [ ] Add `GEMINI_API_KEY` to `gervis-backend/.env` (get from Google AI Studio)
-- [ ] Add `GOOGLE_MAPS_API_KEY` to `gervis-backend/.env` (optional, for maps tool)
 
 ### Acceptance Criteria
 
-- Wake word on phone → Gemini session starts on backend → voice conversation works end-to-end
-- `search_tool` and `maps_tool` execute on backend, Gemini speaks the result naturally
-- Barge-in / interrupted works: phone audio buffer clears immediately
-- Turns persist to Cloud SQL in real time
-- No Gemini API key exists anywhere on the Android app
+- [x] Wake word on phone → Gemini session starts on backend → voice conversation works end-to-end
+- [ ] `search_tool` executes on backend — Gemini speaks a grounded search result naturally
+- [ ] `maps_tool` executes on backend — Gemini speaks a grounded maps result naturally
+- [x] Barge-in / interrupted works: phone audio buffer clears immediately
+- [x] Turns persist to PostgreSQL in real time (visible in DB after a conversation)
+- [x] No Gemini API key exists anywhere on the Android app
 
 ### ⏸ Awaiting approval to proceed to Phase 4
 
