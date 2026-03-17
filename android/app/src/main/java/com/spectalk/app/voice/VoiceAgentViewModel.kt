@@ -354,9 +354,15 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     @SuppressLint("MissingPermission")
     private fun observeBluetoothHeadset() {
         val app = getApplication<Application>()
-        val btManager = app.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        val alreadyConnected = btManager?.adapter
-            ?.getProfileConnectionState(BluetoothProfile.HEADSET) == BluetoothProfile.STATE_CONNECTED
+
+        // BLUETOOTH_CONNECT is a runtime permission on API 31+. Wrap all BT access in
+        // runCatching so a missing permission degrades gracefully instead of crashing.
+        val alreadyConnected = runCatching {
+            val btManager = app.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            btManager?.adapter
+                ?.getProfileConnectionState(BluetoothProfile.HEADSET) == BluetoothProfile.STATE_CONNECTED
+        }.getOrDefault(false)
+
         if (alreadyConnected) {
             _uiState.update { it.copy(isBtHeadsetConnected = true) }
             startHotwordService()
@@ -370,13 +376,15 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                         trySend(state == BluetoothProfile.STATE_CONNECTED)
                     }
                 }
-                ContextCompat.registerReceiver(
-                    app,
-                    receiver,
-                    IntentFilter(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED),
-                    ContextCompat.RECEIVER_NOT_EXPORTED,
-                )
-                awaitClose { app.unregisterReceiver(receiver) }
+                runCatching {
+                    ContextCompat.registerReceiver(
+                        app,
+                        receiver,
+                        IntentFilter(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED),
+                        ContextCompat.RECEIVER_NOT_EXPORTED,
+                    )
+                }
+                awaitClose { runCatching { app.unregisterReceiver(receiver) } }
             }.collect { isConnected ->
                 _uiState.update { it.copy(isBtHeadsetConnected = isConnected) }
                 if (isConnected) startHotwordService()
