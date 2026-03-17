@@ -181,7 +181,7 @@ infrastructure in place. No Gemini yet — just the foundation.
 - [x] `config.py` — Pydantic settings, reads from `.env`
 - [x] `db/database.py` — SQLAlchemy async engine, session factory
 - [x] `db/models.py` — `User` ORM model (firebase_uid, email, display_name, timestamps)
-- [ ] `db/migrations/` — Alembic setup, initial migration with full schema
+- [x] `db/migrations/` — Alembic setup, initial migration with full schema
 - [x] `auth/firebase.py` — Firebase Admin SDK init, `verify_firebase_token(id_token)`
 - [x] `auth/jwt_handler.py` — `sign_product_jwt`, `verify_product_jwt` (python-jose)
 - [x] `api/auth.py` — `POST /auth/session`: verify Firebase token, upsert user, return JWT
@@ -370,7 +370,7 @@ Goal: 3D model workflow, long-term memory, artifact browser in app, richer multi
 
 ## Completion Checklist
 
-- [ ] Phase 0 approved
+- [x] Phase 0 approved
 - [ ] Phase 1 approved
 - [ ] Phase 2 approved
 - [ ] Phase 3 approved
