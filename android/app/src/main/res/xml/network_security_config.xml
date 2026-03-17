@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Allow cleartext HTTP only to the Android emulator's host loopback address.
+        10.0.2.2 is the emulator's alias for the dev machine's localhost.
+        All other traffic (including the production Cloud Run HTTPS URL) is unaffected.
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>
