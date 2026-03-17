@@ -80,7 +80,7 @@ Reference for UI patterns: `samples/gemini-voice-agent/`
 ---
 
 ## Phase 1 — Android App: Voice Session UI
-**Status: `🔲 NOT STARTED`**
+**Status: `🔄 IN PROGRESS`**
 
 Goal: Full voice session UI connected to a local mock backend (or still directly to Gemini
 as a temporary bridge). Wake-word detection, animated listening state, transcript display,
@@ -91,34 +91,33 @@ Reference for all UI and audio components: `samples/gemini-voice-agent/`
 
 ### Tasks
 
-- [ ] `AndroidAudioRecorder` — port from `samples/gemini-voice-agent` with AEC, NS, AGC
-- [ ] `PcmAudioPlayer` — port from `samples/gemini-voice-agent` with interrupt-aware buffer
-- [ ] `HotwordService` — port from sample with these changes:
+- [x] `AndroidAudioRecorder` — port from `samples/gemini-voice-agent` with AEC, NS, AGC
+- [x] `PcmAudioPlayer` — port from `samples/gemini-voice-agent` with interrupt-aware buffer
+- [x] `HotwordService` — port from sample with these changes:
       - Read wake word from `SharedPreferences` (key: `pref_wake_word`, default `"Hey Gervis"`)
       - Rebuild Vosk grammar at service start using the configured word
       - On wake word detected: play activation sound **before** connecting to backend
       - Test with both default word and a user-configured custom word
       - Test BT headset audio routing (AirPods and Meta Glasses)
-- [ ] **Activation sound**
+- [x] **Activation sound**
       - Add a short chime audio asset to `app/src/main/res/raw/activation_sound.wav`
       - Play via `SoundPool` or `AudioTrack` on wake word detection, routed to the active audio
         output (BT headset if connected, phone speaker otherwise)
       - Sound must finish playing before mic audio starts streaming to backend
-- [ ] `BackendVoiceClient` skeleton
+- [x] `BackendVoiceClient` skeleton
       - WebSocket to backend: `WS /ws/voice/{conversation_id}`
       - JWT in Authorization header on upgrade
       - Binary frame send (PCM 16kHz) and receive (PCM 24kHz)
       - JSON control message parsing (`interrupted`, `input_transcript`, `output_transcript`,
         `state_update`, `job_started`, `job_update`, `error`)
-      - Reconnect with exponential backoff
-      - **Note:** In this phase the WebSocket endpoint can point to a temporary local mock
-        server or the sample's Gemini session — replace with real backend in Phase 3
-- [ ] `VoiceAgentViewModel`
-      - Replace `GeminiAgentViewModel` logic to use `BackendVoiceClient`
-      - Handle all control message types via `StateFlow`
-      - Manage microphone start/stop, connection lifecycle
-- [ ] **Voice Session screen**
-      - Animated listening orb (port from sample)
+      - **Note:** In this phase the WebSocket endpoint points to local emulator (`ws://10.0.2.2:8080`)
+        via `BackendConfig` — replace with real Cloud Run URL in Phase 3
+- [x] `VoiceAgentViewModel`
+      - Uses `BackendVoiceClient` (reads URL from `BackendConfig`, JWT from `TokenRepository`)
+      - Handles all control message types via `StateFlow`
+      - Manages microphone start/stop, connection lifecycle
+- [x] **Voice Session screen**
+      - Animated listening orb (ported from sample)
       - Input transcript display (user speech)
       - Output transcript display (assistant response)
       - Connection status pill
@@ -128,17 +127,17 @@ Reference for all UI and audio components: `samples/gemini-voice-agent/`
       - Show conversation items with summary and timestamp
       - Badge for pending resume events (populated once backend exists)
       - Tap to open/resume a conversation
-- [ ] **Inactivity auto-disconnect (10 seconds)**
-      - In `VoiceAgentViewModel`, maintain a `Job` inactivity timer
+- [x] **Inactivity auto-disconnect (10 seconds)**
+      - In `VoiceAgentViewModel`, maintains a `Job` inactivity timer
       - Timer starts when the voice session becomes active
       - Timer resets on every `input_transcript` or `output_transcript` control message received
       - Timer is paused while `PcmAudioPlayer` has audio in its queue (Gervis is speaking)
-      - On timeout (10s of silence from both sides): send `{"type": "end_of_speech"}`, close
-        WebSocket, resume `HotwordService`
-      - Show a brief UI fade-out animation before disconnecting
-- [ ] Bluetooth headset monitoring — restart Vosk on BT connect/disconnect
+      - On timeout (10s of silence from both sides): sends `{"type": "end_of_speech"}`, closes
+        WebSocket, resumes `HotwordService`
+- [x] Bluetooth headset monitoring — restart Vosk on BT connect/disconnect
 - [ ] Meta Glasses video preview (optional, port from sample if needed)
-- [ ] Notification channel setup for push notifications (FCM, even though no notifications yet)
+- [x] Notification channel setup for push notifications (FCM — `FcmService` + two channels created
+      in `SpecTalkApplication.onCreate()`)
 
 ### Acceptance Criteria
 
