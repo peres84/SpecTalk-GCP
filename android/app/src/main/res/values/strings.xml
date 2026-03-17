@@ -6,5 +6,5 @@
     <!-- Backend base URL — no trailing slash.
          Dev (Android emulator → host localhost): http://10.0.2.2:8080
          Production: paste your Cloud Run URL, e.g. https://gervis-backend-xxxxxxxxxx-uc.a.run.app -->
-    <string name="backend_base_url">http://10.0.2.2:8080</string>
+    <string name="backend_base_url">http://192.168.0.128:8080</string>
 </resources>

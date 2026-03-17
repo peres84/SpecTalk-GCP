@@ -141,19 +141,28 @@ A row should appear in the Neon `users` table and a row in `conversations`.
 
 ## Step 5 — Android: point the app at the local backend
 
-The Android app is already wired to call `POST /auth/session`.
-For an emulator, `http://10.0.2.2:8080` reaches your host machine's port 8080.
+The backend URL lives in `android/app/src/main/res/values/strings.xml`.
+Two scenarios depending on how you're running the app:
 
-`android/app/src/main/res/values/strings.xml` already has:
+### Emulator
+`10.0.2.2` is the emulator's built-in alias for the host machine's localhost:
 ```xml
 <string name="backend_base_url">http://10.0.2.2:8080</string>
 ```
 
-No change needed for emulator testing. For a physical device on the same Wi-Fi:
+### Physical device (confirmed working ✅)
+The device must be on the same Wi-Fi as your dev machine. Use the machine's
+Wi-Fi IPv4 address (`ipconfig` → Wireless LAN adapter Wi-Fi → IPv4 Address):
 ```xml
-<string name="backend_base_url">http://192.168.x.x:8080</string>
+<string name="backend_base_url">http://192.168.0.128:8080</string>
 ```
-Replace `192.168.x.x` with your machine's local IP (`ipconfig` on Windows).
+
+> **Note:** `10.0.2.2` only works inside the Android emulator. A physical device
+> on Wi-Fi cannot reach it — use the machine's local IP instead.
+
+The `network_security_config.xml` allows cleartext HTTP to both addresses so
+Android's security policy doesn't block the connection. When you switch to the
+Cloud Run `https://` URL neither entry is needed — HTTPS is always permitted.
 
 ---
 
