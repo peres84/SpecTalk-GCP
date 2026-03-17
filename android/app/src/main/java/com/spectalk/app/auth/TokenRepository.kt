@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.spectalk.app.config.BackendConfig
+import com.spectalk.app.location.UserLocationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -46,13 +47,6 @@ class TokenRepository(context: Context) {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    // ── Auth ─────────────────────────────────────────────────────────────────
-
-    /**
-     * Exchange a Firebase ID token for a product JWT.
-     * Stores the JWT and user_id in encrypted storage on success.
-     * @throws IOException on network or non-2xx response.
-     */
     suspend fun exchangeFirebaseToken(idToken: String): String = withContext(Dispatchers.IO) {
         val body = JSONObject().put("firebase_id_token", idToken).toString()
             .toRequestBody("application/json".toMediaType())
@@ -88,36 +82,30 @@ class TokenRepository(context: Context) {
         prefs.edit().remove(KEY_JWT).remove(KEY_USER_ID).apply()
     }
 
-    // ── Voice session ────────────────────────────────────────────────────────
+    suspend fun startVoiceSession(locationContext: UserLocationContext? = null): String =
+        withContext(Dispatchers.IO) {
+            val jwt = getProductJwt().ifBlank {
+                throw IOException("No product JWT - user not authenticated")
+            }
 
-    /**
-     * Call POST /voice/session/start to create a new conversation on the backend.
-     * Returns the conversation_id to pass to the WebSocket.
-     * @throws IOException on failure.
-     */
-    suspend fun startVoiceSession(): String = withContext(Dispatchers.IO) {
-        val jwt = getProductJwt().ifBlank { throw IOException("No product JWT — user not authenticated") }
+            val body = JSONObject().apply {
+                locationContext?.let { put("location_context", it.toJson()) }
+            }.toString().toRequestBody("application/json".toMediaType())
 
-        val request = Request.Builder()
-            .url("${BackendConfig.baseUrl}/voice/session/start")
-            .post("".toRequestBody(null))
-            .header("Authorization", "Bearer $jwt")
-            .build()
+            val request = Request.Builder()
+                .url("${BackendConfig.baseUrl}/voice/session/start")
+                .post(body)
+                .header("Authorization", "Bearer $jwt")
+                .build()
 
-        val response = http.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw IOException("Failed to start voice session (${response.code})")
+            val response = http.newCall(request).execute()
+            if (!response.isSuccessful) {
+                throw IOException("Failed to start voice session (${response.code})")
+            }
+
+            JSONObject(response.body!!.string()).getString("conversation_id")
         }
 
-        JSONObject(response.body!!.string()).getString("conversation_id")
-    }
-
-    // ── Notifications ────────────────────────────────────────────────────────
-
-    /**
-     * Register an FCM push token with the backend.
-     * Best-effort — failures are silently ignored by the caller.
-     */
     suspend fun registerPushToken(fcmToken: String) = withContext(Dispatchers.IO) {
         val jwt = getProductJwt().ifBlank { return@withContext }
 

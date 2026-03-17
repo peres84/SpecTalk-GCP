@@ -84,10 +84,15 @@ dependencies {
 
     // WebSocket (BackendVoiceClient)
     implementation(libs.okhttp)
+    implementation(libs.play.services.location)
+    implementation(libs.kotlinx.coroutines.play.services)
 
     // Vosk wake-word detection
     implementation("com.alphacephei:vosk-android:0.3.47@aar") { isTransitive = true }
     implementation("net.java.dev.jna:jna:5.13.0@aar")
+
+    // Meta Wearables DAT SDK
+    implementation(libs.mwdat.core)
 }
 
 // ---------------------------------------------------------------------------

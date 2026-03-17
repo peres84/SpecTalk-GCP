@@ -62,4 +62,4 @@ async def set_conversation_idle(conversation_id: str) -> None:
                 conv.state = "idle"
                 await session.commit()
     except Exception as e:
-        logger.error(f"Failed to set conversation idle [{conversation_id}]: {e}")
+        logger.warning(f"Failed to set conversation idle [{conversation_id}]: {e}")

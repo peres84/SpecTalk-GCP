@@ -5,6 +5,192 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — GPS precision + proactive location on connect
+
+### Added
+
+#### Full-precision GPS coordinates sent on WebSocket connect
+- Android now sends a `location_response` message immediately when the WebSocket
+  connection is established (if location permission is granted), so the backend cache
+  is warm before the first voice turn. No round-trip required when the Maps tool runs.
+- Coordinates are full-precision `Double` (e.g. `48.26319, 11.43421`) serialised via
+  `JSONObject.put(String, Double)` — no rounding applied.
+- `accuracy_meters` is always included when the GPS fix provides it, so the backend
+  knows fix quality.
+- `location_label` (reverse-geocoded city/country string) is still included as a
+  display fallback but Maps queries now use raw coordinates directly.
+
+### Fixed
+
+#### Location fix used WiFi/cell towers instead of GPS
+- **Symptom:** Coordinates sent to the backend had only 3–4 decimal places of real
+  precision (~50–100 m accuracy), insufficient for Maps queries that need street-level
+  accuracy.
+- **Root cause:** `getCurrentLocation` was called with
+  `Priority.PRIORITY_BALANCED_POWER_ACCURACY`, which uses WiFi and cell tower trilateration
+  rather than the GPS chip.
+- **Fix:** Changed to `Priority.PRIORITY_HIGH_ACCURACY` so the GPS chip is used, giving
+  5+ decimal places (~1 m precision). Called only once per session start so battery
+  impact is negligible.
+- **File:** `location/UserLocationRepository.kt`
+
+---
+
+## [Unreleased] — Fix premature inactivity disconnect while user is speaking
+
+### Fixed
+
+#### Session disconnects mid-speech before transcript arrives
+- **Symptom:** The session disconnected while the user was actively speaking, well before
+  10 seconds of real silence had elapsed.
+- **Root cause:** The inactivity timer only reset on `InputTranscript` and `OutputTranscript`
+  events. There is a gap between when the user starts speaking (audio chunks streaming) and
+  when the backend returns a transcript (Gemini processing latency). If this gap pushed the
+  timer over 10 seconds — e.g., the user asked a long question right after Gervis finished
+  a response — the timer fired mid-utterance and disconnected the session.
+- **Fix:** Added `lastAudioSentTime`, a volatile timestamp updated on every outgoing PCM
+  audio chunk (~every 64ms while the user is speaking). The inactivity timer now has a
+  second guard: if an audio chunk was sent within the last `INACTIVITY_TIMEOUT_MS`, the
+  timer continues waiting instead of disconnecting. The session only disconnects when there
+  has been no transcript activity AND no outgoing audio for the full timeout window.
+- **Files:** `voice/VoiceAgentViewModel.kt`
+
+---
+
+## [Unreleased] — Fix two simultaneous WebSocket connections (double agent bug)
+
+### Fixed
+
+#### Two agents responding simultaneously — double WebSocket connections
+- **Symptom:** Two AI agents were listening and responding at the same time, as if two
+  separate voice sessions were active simultaneously.
+- **Root cause (1 — nav stack):** In Compose Navigation, the previous destination stays
+  in the composition tree while a new destination is on top. When a wake word fired while
+  `VoiceSessionScreen` was already showing, both `HomeScreen`'s `LaunchedEffect` (still
+  active in the background) and `VoiceAgentViewModel.init`'s `wakeWordDetected.collect`
+  received the event. `HomeScreen` pushed a *second* `VoiceSessionScreen` onto the nav
+  stack (Home → VoiceSession → VoiceSession), creating a second ViewModel and a second
+  WebSocket alongside the original.
+- **Root cause (2 — async guard race):** `startSession()` checked `isConnecting` before
+  setting it to `true`, but the `isConnecting = true` update was inside
+  `viewModelScope.launch {}` — an async operation. Two concurrent calls could both pass
+  the guard before either one updated the state, opening two WebSockets within the same
+  ViewModel.
+- **Fix 1:** Added `popUpTo(Screen.Home.route)` to every `navController.navigate` call
+  targeting `VoiceSession`. This guarantees the nav stack is always at most
+  `Home → VoiceSession`, so a second VoiceSession can never be pushed on top of an
+  existing one.
+- **Fix 2:** Moved `_uiState.update { it.copy(isConnecting = true) }` to *before*
+  `viewModelScope.launch` in `startSession()`. The flag is now set synchronously on the
+  main thread, so any subsequent call sees `isConnecting = true` immediately and returns
+  early.
+- **Files:** `navigation/SpecTalkNavGraph.kt`, `voice/VoiceAgentViewModel.kt`
+
+---
+
+## [Unreleased] — Fix echo regression (USAGE_VOICE_COMMUNICATION)
+
+### Fixed
+
+#### Echo returned after agent changed PcmAudioPlayer audio usage
+- **Symptom:** Gervis's voice was picked up by the mic and streamed back as user speech,
+  causing the assistant to hear itself.
+- **Root cause:** `PcmAudioPlayer` was using `AudioAttributes.USAGE_ASSISTANT` for the
+  `AudioTrack`. Hardware AEC needs the speaker output to go through the voice communication
+  audio path to use it as an echo reference signal. `USAGE_ASSISTANT` routes through a
+  different path, so AEC had no reference and could not cancel the echo.
+- **Fix:** Changed `AudioTrack` usage back to `AudioAttributes.USAGE_VOICE_COMMUNICATION`
+  so both mic (`AudioSource.VOICE_COMMUNICATION`) and speaker share the same VoIP audio
+  path that Android's hardware AEC is designed for.
+- **File:** `audio/PcmAudioPlayer.kt`
+
+---
+
+## [Unreleased] — Lock screen wake word + location request-response + remove active conversation
+
+### Added
+
+#### Wake word now works when the phone is locked
+- **Symptom:** Saying "Hey Gervis" while the phone was locked did nothing — the foreground
+  service was alive but `MainActivity` could not come to the foreground over the lock screen.
+- **Fix:** Added `android:showWhenLocked="true"` and `android:turnScreenOn="true"` to
+  `MainActivity` in `AndroidManifest.xml`. Combined with the existing `PARTIAL_WAKE_LOCK`
+  in `HotwordService`, the app now surfaces over the lock screen and turns on the display
+  when a wake word is detected.
+- **File:** `app/src/main/AndroidManifest.xml`
+
+#### On-demand location via WebSocket request-response
+- Replaced the "push location at session start" approach with a request-response protocol.
+- When the backend Maps tool needs coordinates it sends `{"type": "request_location"}` over
+  the voice WebSocket. Android fetches a fresh GPS fix and responds with
+  `{"type": "location_response", "latitude": ..., "longitude": ..., "accuracy_meters": ...,
+  "location_label": "..."}`.
+- Location is only fetched when the backend actually needs it (battery-efficient).
+- If location sharing is disabled or permission is denied, the backend receives no response
+  and should ask the user for a place normally.
+- **Files:** `voice/BackendVoiceClient.kt`, `voice/VoiceAgentViewModel.kt`
+
+### Changed
+
+#### Active conversation concept removed
+- Every FAB tap or wake word event now creates a new conversation. There is no longer an
+  "active" conversation that the wake word targets — the model is simply: wake word → new
+  conversation, conversation row tap → resume that conversation.
+- Removed: `ActivationChip` in `VoiceSessionScreen`, `toggleActivation()` in
+  `VoiceAgentViewModel`, `deactivateCurrentActive()` in `HomeViewModel`,
+  `isConversationActive` in `VoiceSessionUiState`, `isActive` nav argument and route param.
+- **Files:** `navigation/Screen.kt`, `navigation/SpecTalkNavGraph.kt`,
+  `ui/screens/HomeScreen.kt`, `ui/screens/VoiceSessionScreen.kt`,
+  `voice/VoiceSessionUiState.kt`, `voice/VoiceAgentViewModel.kt`,
+  `conversations/HomeViewModel.kt`
+
+---
+
+## [Unreleased] - Meta device wake-word gate + location sharing
+
+### Fixed
+
+#### Wake word now idles until a supported connected device is available
+- **Symptom:** The Android hotword listener could keep running from the phone microphone even
+  when no Meta glasses or Bluetooth audio device was connected.
+- **Root cause:** `HotwordService` owned its own coarse Bluetooth headset check and could still
+  initialize Vosk independently of real device/session availability.
+- **Fix:** Added a shared `ConnectedDeviceMonitor` that combines Meta DAT device availability
+  (`Wearables.devices`) with Bluetooth/audio-device state and exposes a single
+  `isWakeWordReady` gate. `HotwordService` now starts or stops listening from that shared gate
+  and ignores recognizer callbacks whenever the device is not ready.
+- **Files:** `device/ConnectedDeviceMonitor.kt`, `hotword/HotwordService.kt`,
+  `voice/VoiceAgentViewModel.kt`, `voice/VoiceSessionUiState.kt`
+
+#### App now initializes Meta DAT at startup for Android-side device awareness
+- **Symptom:** The app had no reliable concept of "Meta device connected", so wake-word gating
+  depended only on generic phone Bluetooth state.
+- **Root cause:** The Android app was not initializing the Meta Wearables DAT SDK and had no
+  dependency on the core DAT library.
+- **Fix:** Added `mwdat-core`, initialized `Wearables` from `SpecTalkApplication`, and exposed
+  app-wide device monitoring from startup.
+- **Files:** `app/build.gradle.kts`, `gradle/libs.versions.toml`,
+  `app/src/main/AndroidManifest.xml`, `SpecTalkApplication.kt`
+
+### Added
+
+#### Settings-based location sharing and current-location preview
+- Added persisted location-sharing preference in Settings with runtime permission request for
+  `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION`.
+- Added current-location fetch and reverse-geocoded summary so the user can confirm what the
+  app is about to share with the voice backend.
+- Added a shortcut to app settings when Android permission has been denied.
+- **Files:** `settings/AppPreferences.kt`, `location/UserLocationRepository.kt`,
+  `location/UserLocationContext.kt`, `ui/screens/SettingsScreen.kt`,
+  `app/src/main/AndroidManifest.xml`, `app/build.gradle.kts`
+
+#### Voice sessions now send optional location context to the backend
+- When location sharing is enabled, Android now resolves a fresh location context before voice
+  session start, includes it in `POST /voice/session/start`, and re-sends it over the voice
+  WebSocket once connected.
+- **Files:** `auth/TokenRepository.kt`, `voice/BackendVoiceClient.kt`,
+  `voice/VoiceAgentViewModel.kt`
+
 ## [Unreleased] — Phase 1 + Phase 3 integration
 
 ### Fixed

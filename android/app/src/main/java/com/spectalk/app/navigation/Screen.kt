@@ -9,10 +9,10 @@ sealed interface Screen {
     data object Home : Screen { override val route = "home" }
     data object Settings : Screen { override val route = "settings" }
     data object VoiceSession : Screen {
-        override val route = "voice_session?conversationId={conversationId}&isActive={isActive}"
-        fun routeWith(conversationId: String?, isActive: Boolean) = buildString {
-            append("voice_session?isActive=$isActive")
-            if (conversationId != null) append("&conversationId=$conversationId")
+        override val route = "voice_session?conversationId={conversationId}"
+        fun routeWith(conversationId: String?) = buildString {
+            append("voice_session")
+            if (conversationId != null) append("?conversationId=$conversationId")
         }
     }
 }

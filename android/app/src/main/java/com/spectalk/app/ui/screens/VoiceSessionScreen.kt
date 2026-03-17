@@ -13,14 +13,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,8 +30,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -65,7 +61,6 @@ import com.spectalk.app.voice.VoiceSessionUiState
 @Composable
 fun VoiceSessionScreen(
     conversationId: String?,
-    isActive: Boolean = true,
     onNavigateBack: () -> Unit,
     viewModel: VoiceAgentViewModel = viewModel(),
 ) {
@@ -74,7 +69,7 @@ fun VoiceSessionScreen(
 
     // Auto-start session when screen opens (either new or resuming existing conversation)
     LaunchedEffect(conversationId) {
-        viewModel.startSession(conversationId, isActive)
+        viewModel.startSession(conversationId)
     }
 
     LaunchedEffect(uiState.recentError) {
@@ -100,14 +95,6 @@ fun VoiceSessionScreen(
                     }
                 },
                 title = { Text("Gervis", fontWeight = FontWeight.SemiBold) },
-                actions = {
-                    ActivationChip(
-                        isActive = uiState.isConversationActive,
-                        enabled = uiState.conversationId != null,
-                        onToggle = { viewModel.toggleActivation() },
-                    )
-                    Spacer(Modifier.width(8.dp))
-                },
             )
         },
         snackbarHost = {
@@ -171,40 +158,6 @@ fun VoiceSessionScreen(
             }
         }
     }
-}
-
-/**
- * Chip showing whether this conversation is the active wake-word target.
- * Tapping it calls [onToggle] to flip the state via the ViewModel.
- * When [enabled] is false (no conversation resolved yet) the chip is greyed out.
- */
-@Composable
-private fun ActivationChip(isActive: Boolean, enabled: Boolean, onToggle: () -> Unit) {
-    val color = if (isActive) MaterialTheme.colorScheme.secondary
-    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-    FilterChip(
-        selected = isActive,
-        onClick = { if (enabled) onToggle() },
-        label = {
-            Text(
-                text = if (isActive) "Active" else "Inactive",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-        },
-        colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = color.copy(alpha = 0.15f),
-            selectedLabelColor = color,
-            containerColor = MaterialTheme.colorScheme.surface,
-            labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-        ),
-        border = FilterChipDefaults.filterChipBorder(
-            enabled = enabled,
-            selected = isActive,
-            borderColor = color.copy(alpha = 0.30f),
-            selectedBorderColor = color.copy(alpha = 0.50f),
-        ),
-    )
 }
 
 @Composable

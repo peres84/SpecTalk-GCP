@@ -6,6 +6,8 @@ Protocol:
     - Binary frames: raw PCM 16kHz 16-bit mono audio
     - JSON text: {"type": "end_of_speech"}
                  {"type": "image", "mime_type": "image/jpeg", "data": "<base64>"}
+                 {"type": "location_response", "latitude": float, "longitude": float,
+                  "accuracy_meters": float (optional), "location_label": str (optional)}
 
   Backend -> Phone:
     - Binary frames: raw PCM 24kHz 16-bit mono audio
@@ -13,6 +15,7 @@ Protocol:
                  {"type": "input_transcript", "text": "...", "is_partial": bool}
                  {"type": "output_transcript", "text": "...", "is_partial": bool}
                  {"type": "turn_complete"}
+                 {"type": "request_location"}
                  {"type": "error", "message": "..."}
 
 Auth: JWT passed as query param ?token=<jwt> OR Authorization header.
@@ -23,32 +26,56 @@ import asyncio
 import base64
 import json
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from starlette.websockets import WebSocketState
+import os
+
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.genai import types
+from starlette.websockets import WebSocketState
 
 from auth.jwt_handler import verify_product_jwt
-from fastapi import HTTPException
-from services.gemini_live_client import gemini_live_client
 from services.audio_session_manager import audio_session_manager
-from services.conversation_service import persist_turn, set_conversation_active, set_conversation_idle
+from services.conversation_service import (
+    persist_turn,
+    set_conversation_active,
+    set_conversation_idle,
+)
+from services.gemini_live_client import gemini_live_client
+import services.location_channels as location_channels
+from services.tracing import get_opik_client
+from services.location_context_service import (
+    normalize_location_context,
+    set_conversation_location_context,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+def _opik_log_turn(conversation_id: str, role: str, text: str) -> None:
+    """Fire-and-forget: log a completed voice turn to Opik with the conversation as thread."""
+    client = get_opik_client()
+    if not client:
+        return
+    try:
+        client.trace(
+            name=f"voice_turn:{role}",
+            input={"text": text} if role == "user" else None,
+            output={"text": text} if role == "assistant" else None,
+            thread_id=conversation_id,
+        )
+    except Exception:
+        pass
+
 
 def _extract_jwt(websocket: WebSocket, token: str | None) -> dict | None:
     """Extract and verify JWT from query param or Authorization header."""
-    # 1. Query param
     if token:
         try:
             return verify_product_jwt(token)
         except HTTPException:
             return None
 
-    # 2. Authorization header
     auth_header = websocket.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         raw = auth_header.removeprefix("Bearer ").strip()
@@ -72,7 +99,6 @@ async def _upstream_task(
         if message.get("type") == "websocket.disconnect":
             break
 
-        # Binary frame = raw PCM audio from phone mic (16kHz 16-bit mono)
         if "bytes" in message and message["bytes"] is not None:
             audio_data = message["bytes"]
             audio_blob = types.Blob(
@@ -81,27 +107,28 @@ async def _upstream_task(
             )
             live_request_queue.send_realtime(audio_blob)
 
-        # Text frame = JSON control message from phone
         elif "text" in message and message["text"] is not None:
             try:
                 msg = json.loads(message["text"])
                 msg_type = msg.get("type")
 
                 if msg_type == "end_of_speech":
-                    # ADK 1.1.1: send_realtime() only accepts types.Blob — passing
-                    # types.ActivityEnd() creates a LiveRequest with a null blob that
-                    # Gemini rejects with ValueError. Skip the signal; VAD handles
-                    # silence detection via RunConfig.realtime_input_config on ADK >= 1.2.
                     logger.debug(f"[{conversation_id}] end_of_speech received (VAD handles)")
 
                 elif msg_type == "image":
-                    # Inject image into the ADK session
                     raw = base64.b64decode(msg.get("data", ""))
                     mime = msg.get("mime_type", "image/jpeg")
                     live_request_queue.send_realtime(
                         types.Blob(mime_type=mime, data=raw)
                     )
                     logger.debug(f"[{conversation_id}] image injected ({mime}, {len(raw)} bytes)")
+
+                elif msg_type == "location_response":
+                    normalized = normalize_location_context(msg)
+                    if normalized:
+                        await set_conversation_location_context(conversation_id, normalized)
+                        location_channels.notify(conversation_id, normalized)
+                        logger.debug(f"[{conversation_id}] location_response received")
 
             except (json.JSONDecodeError, KeyError) as e:
                 logger.warning(f"[{conversation_id}] Malformed control message: {e}")
@@ -121,7 +148,6 @@ async def _downstream_task(
             if websocket.client_state != WebSocketState.CONNECTED:
                 break
 
-            # CRITICAL: Handle interrupted FIRST — clear phone audio buffer immediately
             if event.interrupted:
                 await websocket.send_text(json.dumps({"type": "interrupted"}))
                 logger.debug(f"[{conversation_id}] interrupted forwarded to phone")
@@ -132,7 +158,6 @@ async def _downstream_task(
                     await websocket.send_text(json.dumps({"type": "turn_complete"}))
                 continue
 
-            # Transcription events from user (input) and model (output)
             for part in event.content.parts:
                 if part.text:
                     if event.content.role == "user":
@@ -145,6 +170,7 @@ async def _downstream_task(
                             asyncio.create_task(
                                 persist_turn(conversation_id, "user", part.text, "voice_transcript")
                             )
+                            _opik_log_turn(conversation_id, "user", part.text)
 
                     elif event.content.role == "model":
                         await websocket.send_text(json.dumps({
@@ -156,8 +182,8 @@ async def _downstream_task(
                             asyncio.create_task(
                                 persist_turn(conversation_id, "assistant", part.text, "voice_transcript")
                             )
+                            _opik_log_turn(conversation_id, "assistant", part.text)
 
-                # Binary audio from Gemini — forward raw PCM bytes to phone (zero-copy)
                 elif part.inline_data and part.inline_data.mime_type.startswith("audio/pcm"):
                     await websocket.send_bytes(part.inline_data.data)
 
@@ -167,8 +193,6 @@ async def _downstream_task(
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        # This catches errors from Gemini itself (auth failure, quota, bad model name, etc.)
-        # that are thrown when the async generator produces its first item.
         logger.error(f"[{conversation_id}] Gemini Live session error: {e}", exc_info=True)
         try:
             await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
@@ -182,12 +206,7 @@ async def voice_websocket(
     conversation_id: str,
     token: str | None = Query(default=None),
 ) -> None:
-    """
-    Bidirectional voice bridge between the phone and ADK/Gemini Live.
-
-    Authenticated by JWT (query param ?token= or Authorization header).
-    """
-    # 1. Authenticate on upgrade
+    """Bidirectional voice bridge between the phone and ADK/Gemini Live."""
     payload = _extract_jwt(websocket, token)
     if not payload:
         await websocket.close(code=4001, reason="Unauthorized")
@@ -198,15 +217,19 @@ async def voice_websocket(
 
     await websocket.accept()
 
-    # 2. Get or create session entry (handles reconnect grace logic)
-    entry = await audio_session_manager.get_or_create_entry(conversation_id, user_id)
+    await audio_session_manager.get_or_create_entry(conversation_id, user_id)
 
-    # 3. Start ADK Live session for this connection
     try:
-        await gemini_live_client.get_or_create_session(
+        session = await gemini_live_client.get_or_create_session(
             user_id=user_id,
             session_id=conversation_id,
         )
+
+        async def _send_request_location() -> None:
+            await websocket.send_text(json.dumps({"type": "request_location"}))
+
+        location_channels.register(conversation_id, _send_request_location)
+
         live_request_queue = gemini_live_client.new_request_queue()
         live_events = gemini_live_client.start_live_session(
             user_id=user_id,
@@ -222,10 +245,8 @@ async def voice_websocket(
         await websocket.close(code=1011)
         return
 
-    # 4. Mark conversation active in DB
     asyncio.create_task(set_conversation_active(conversation_id))
 
-    # 5. Run upstream and downstream concurrently
     upstream = asyncio.create_task(
         _upstream_task(websocket, live_request_queue, conversation_id)
     )
@@ -238,7 +259,6 @@ async def voice_websocket(
             [upstream, downstream],
             return_when=asyncio.FIRST_COMPLETED,
         )
-        # Surface any exception that ended a task (e.g. Gemini auth failure)
         for task in done:
             if task.exception():
                 logger.error(
@@ -248,11 +268,11 @@ async def voice_websocket(
     except Exception as e:
         logger.error(f"[{conversation_id}] Session error: {e}", exc_info=True)
     finally:
-        # Clean up tasks
         upstream.cancel()
         downstream.cancel()
         live_request_queue.close()
 
         logger.info(f"[{conversation_id}] Phone disconnected, starting grace timer")
+        location_channels.unregister(conversation_id)
         audio_session_manager.start_grace_timer(conversation_id)
         asyncio.create_task(set_conversation_idle(conversation_id))

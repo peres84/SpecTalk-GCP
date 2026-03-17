@@ -68,8 +68,15 @@ fun SpecTalkNavGraph() {
             HomeScreen(
                 authViewModel = authViewModel,
                 onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                onNavigateToVoiceSession = { conversationId, isActive ->
-                    navController.navigate(Screen.VoiceSession.routeWith(conversationId, isActive))
+                onNavigateToVoiceSession = { conversationId ->
+                    // popUpTo(Home) ensures the stack never stacks two VoiceSession
+                    // destinations (Home → VoiceSession → VoiceSession). Without this,
+                    // both HomeScreen's LaunchedEffect and the existing ViewModel's
+                    // wakeWordDetected collector can fire on the same wake event, pushing
+                    // a second VoiceSessionScreen and opening a second WebSocket.
+                    navController.navigate(Screen.VoiceSession.routeWith(conversationId)) {
+                        popUpTo(Screen.Home.route)
+                    }
                 },
                 onSignOut = {
                     navController.navigate(Screen.Login.route) {
@@ -93,17 +100,11 @@ fun SpecTalkNavGraph() {
                     nullable = true
                     defaultValue = null
                 },
-                navArgument("isActive") {
-                    type = NavType.BoolType
-                    defaultValue = true
-                },
             ),
         ) { backStackEntry ->
             val conversationId = backStackEntry.arguments?.getString("conversationId")
-            val isActive = backStackEntry.arguments?.getBoolean("isActive") ?: true
             VoiceSessionScreen(
                 conversationId = conversationId,
-                isActive = isActive,
                 onNavigateBack = { navController.popBackStack() },
             )
         }

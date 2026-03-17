@@ -73,7 +73,7 @@ import java.time.temporal.ChronoUnit
 fun HomeScreen(
     authViewModel: AuthViewModel,
     onNavigateToSettings: () -> Unit,
-    onNavigateToVoiceSession: (conversationId: String?, isActive: Boolean) -> Unit,
+    onNavigateToVoiceSession: (conversationId: String?) -> Unit,
     onSignOut: () -> Unit,
     homeViewModel: HomeViewModel = viewModel(),
 ) {
@@ -114,18 +114,14 @@ fun HomeScreen(
         }
     }
 
-    // Wake word detected → resume the existing active conversation, or start a new one
+    // Wake word detected → always start a new conversation
     LaunchedEffect(Unit) {
-        fun findActiveConversationId(): String? =
-            homeViewModel.uiState.value.conversations
-                .firstOrNull { it.state == "active" || it.state == "awaiting_resume" }?.id
-
         if (HotwordEventBus.consumePendingWakeWord()) {
-            onNavigateToVoiceSession(findActiveConversationId(), true)
+            onNavigateToVoiceSession(null)
             return@LaunchedEffect
         }
         HotwordEventBus.wakeWordDetected.collect {
-            onNavigateToVoiceSession(findActiveConversationId(), true)
+            onNavigateToVoiceSession(null)
         }
     }
 
@@ -148,8 +144,7 @@ fun HomeScreen(
         },
         floatingActionButton = {
             FloatingActionButton(onClick = {
-                homeViewModel.deactivateCurrentActive()
-                onNavigateToVoiceSession(null, true)
+                onNavigateToVoiceSession(null)
             }) {
                 Icon(Icons.Filled.Add, contentDescription = "New conversation")
             }
@@ -199,12 +194,7 @@ fun HomeScreen(
                         ) {
                             ConversationRow(
                                 item = conversation,
-                                onClick = {
-                                    onNavigateToVoiceSession(
-                                        conversation.id,
-                                        conversation.state == "active",
-                                    )
-                                },
+                                onClick = { onNavigateToVoiceSession(conversation.id) },
                             )
                         }
                         HorizontalDivider(

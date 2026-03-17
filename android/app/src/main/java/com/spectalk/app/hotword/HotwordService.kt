@@ -1,18 +1,12 @@
 package com.spectalk.app.hotword
 
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.bluetooth.BluetoothHeadset
-import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -21,12 +15,13 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
 import com.spectalk.app.MainActivity
+import com.spectalk.app.device.ConnectedDeviceMonitor
+import com.spectalk.app.device.ConnectedDeviceState
+import com.spectalk.app.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -49,20 +44,9 @@ import java.io.IOException
  * change it in Settings without restarting the app. The Vosk grammar is
  * rebuilt at runtime with the current configured word.
  *
- * Vosk ONLY listens when a Bluetooth audio device (earbuds or Meta glasses)
- * is connected. When no BT headset is present, the wake word is paused and
- * will resume automatically once a headset reconnects.
- *
- * While a voice session is active, HotwordEventBus.isPaused is true and the
- * Vosk recogniser is stopped so the microphone is free. It resumes
- * automatically when the session ends.
- *
- * ── Setup ────────────────────────────────────────────────────────────────────
- * Download the small English model and place it in the app assets:
- *   https://alphacephei.com/vosk/models → vosk-model-small-en-us-0.15.zip
- * Extract and rename the folder to "model", then put it at:
- *   app/src/main/assets/model/
- * ─────────────────────────────────────────────────────────────────────────────
+ * Vosk only listens when an allowed external device is connected. That gate is
+ * driven by [ConnectedDeviceMonitor], which combines Meta wearable availability
+ * and Bluetooth audio-device presence.
  */
 class HotwordService : Service(), RecognitionListener {
 
@@ -75,8 +59,8 @@ class HotwordService : Service(), RecognitionListener {
         private const val WAKE_CHANNEL_ID = "hotword_wake_channel"
         private const val WAKE_NOTIFICATION_ID = 1002
 
-        const val PREF_NAME = "spectalk_prefs"
-        const val PREF_WAKE_WORD = "pref_wake_word"
+        const val PREF_NAME = AppPreferences.PREFS_NAME
+        const val PREF_WAKE_WORD = AppPreferences.PREF_WAKE_WORD
         const val DEFAULT_WAKE_WORD = "hey gervis"
     }
 
@@ -85,64 +69,42 @@ class HotwordService : Service(), RecognitionListener {
 
     private var model: Model? = null
     private var speechService: SpeechService? = null
-
     private var wakeLock: PowerManager.WakeLock? = null
-    private var btReceiver: BroadcastReceiver? = null
-    @Volatile private var isBtHeadsetConnected = false
 
-    // ── Lifecycle ────────────────────────────────────────────────────────────
+    @Volatile
+    private var deviceState: ConnectedDeviceState = ConnectedDeviceState()
 
-    @SuppressLint("MissingPermission")
     override fun onCreate() {
         super.onCreate()
         val pm = getSystemService(PowerManager::class.java)
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HotwordService::cpu")
             .also { it.acquire() }
 
-        // BLUETOOTH_CONNECT is a runtime permission on API 31+. Use runCatching so a
-        // missing permission degrades gracefully — BT state tracking just won't work.
-        isBtHeadsetConnected = runCatching {
-            val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            btManager?.adapter
-                ?.getProfileConnectionState(BluetoothProfile.HEADSET) == BluetoothProfile.STATE_CONNECTED
-        }.getOrDefault(false)
+        ConnectedDeviceMonitor.start(this)
 
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)
-                val connected = state == BluetoothProfile.STATE_CONNECTED
-                isBtHeadsetConnected = connected
-                if (connected) {
-                    Log.i(TAG, "BT headset connected — restarting Vosk listener.")
-                    serviceScope.launch {
-                        stopListening()
-                        delay(1_200)
-                        if (!HotwordEventBus.isPaused.value && model != null) startListening()
-                    }
-                } else {
-                    // BT disconnected — stop listening, wait for headset to reconnect
-                    Log.i(TAG, "BT headset disconnected — wake word paused until headset reconnects.")
-                    serviceScope.launch { stopListening() }
-                }
+        serviceScope.launch {
+            HotwordEventBus.isPaused.collect {
+                updateListeningState()
+                refreshForegroundNotification()
             }
-        }
-        btReceiver = receiver
-        runCatching {
-            ContextCompat.registerReceiver(
-                this,
-                receiver,
-                IntentFilter(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED),
-                ContextCompat.RECEIVER_NOT_EXPORTED,
-            )
         }
 
         serviceScope.launch {
-            HotwordEventBus.isPaused.collect { paused ->
-                if (paused) {
-                    stopListening()
-                } else if (model != null && isBtHeadsetConnected) {
-                    startListening()
+            ConnectedDeviceMonitor.state.collect { state ->
+                val wasReady = deviceState.isWakeWordReady
+                deviceState = state
+                if (state.isWakeWordReady != wasReady) {
+                    Log.i(
+                        TAG,
+                        if (state.isWakeWordReady) {
+                            "Allowed device connected; wake word ready."
+                        } else {
+                            "No allowed device connected; wake word paused."
+                        },
+                    )
                 }
+                updateListeningState()
+                refreshForegroundNotification()
             }
         }
     }
@@ -151,11 +113,7 @@ class HotwordService : Service(), RecognitionListener {
         startForeground(NOTIFICATION_ID, buildNotification())
 
         if (model != null) {
-            serviceScope.launch {
-                stopListening()
-                delay(300)
-                if (!HotwordEventBus.isPaused.value && isBtHeadsetConnected) startListening()
-            }
+            serviceScope.launch { updateListeningState() }
         } else {
             serviceScope.launch { initVosk() }
         }
@@ -163,8 +121,6 @@ class HotwordService : Service(), RecognitionListener {
     }
 
     override fun onDestroy() {
-        btReceiver?.let { unregisterReceiver(it) }
-        btReceiver = null
         stopListening()
         model?.close()
         model = null
@@ -176,44 +132,39 @@ class HotwordService : Service(), RecognitionListener {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // ── Vosk init ────────────────────────────────────────────────────────────
-
     private suspend fun initVosk() = withContext(Dispatchers.IO) {
         try {
             LibVosk.setLogLevel(LogLevel.WARNINGS)
             val modelDir = File(filesDir, MODEL_ASSET)
             if (!modelDir.exists()) {
-                Log.i(TAG, "Copying Vosk model from assets (first run)…")
+                Log.i(TAG, "Copying Vosk model from assets (first run)...")
                 copyAssets(MODEL_ASSET, modelDir)
             }
             model = Model(modelDir.absolutePath)
             Log.i(TAG, "Vosk model loaded.")
-            if (!HotwordEventBus.isPaused.value && isBtHeadsetConnected) startListening()
+            updateListeningState()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialise Vosk: ${e.message}")
         }
     }
 
-    // ── Recognition control ──────────────────────────────────────────────────
-
     private fun startListening() {
-        speechService?.stop()
-        val m = model ?: return
+        if (!deviceState.isWakeWordReady || HotwordEventBus.isPaused.value) return
 
-        // Read the current configured wake word from SharedPreferences each time
-        // so any change in Settings takes effect on the next listen cycle.
+        speechService?.stop()
+        val loadedModel = model ?: return
+
         val prefs: SharedPreferences = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val configuredWord = prefs.getString(PREF_WAKE_WORD, DEFAULT_WAKE_WORD)
             ?.trim()?.lowercase()
             ?.takeIf { it.isNotBlank() }
             ?: DEFAULT_WAKE_WORD
 
-        // Build a compact grammar: the full phrase + just the name + unknown
         val shortName = configuredWord.removePrefix("hey ").trim()
         val grammar = """["$configuredWord", "$shortName", "[unk]"]"""
 
         try {
-            val recognizer = Recognizer(m, SAMPLE_RATE, grammar)
+            val recognizer = Recognizer(loadedModel, SAMPLE_RATE, grammar)
             speechService = SpeechService(recognizer, SAMPLE_RATE).also {
                 it.startListening(this)
             }
@@ -228,10 +179,20 @@ class HotwordService : Service(), RecognitionListener {
         speechService = null
     }
 
-    // ── RecognitionListener ──────────────────────────────────────────────────
+    private fun updateListeningState() {
+        if (HotwordEventBus.isPaused.value || !deviceState.isWakeWordReady || model == null) {
+            stopListening()
+            return
+        }
+
+        if (speechService == null) {
+            startListening()
+        }
+    }
 
     override fun onResult(hypothesis: String?) {
         hypothesis ?: return
+        if (!deviceState.isWakeWordReady) return
         try {
             val text = JSONObject(hypothesis).optString("text", "").trim()
             if (text.isNotEmpty() && text != "[unk]" && isWakePhrase(text)) {
@@ -240,11 +201,13 @@ class HotwordService : Service(), RecognitionListener {
                 HotwordEventBus.notifyWakeWord()
                 postWakeNotification()
             }
-        } catch (_: JSONException) {}
+        } catch (_: JSONException) {
+        }
     }
 
     override fun onPartialResult(hypothesis: String?) {
         hypothesis ?: return
+        if (!deviceState.isWakeWordReady) return
         try {
             val text = JSONObject(hypothesis).optString("partial", "").trim()
             if (text.isNotEmpty() && isWakePhrase(text)) {
@@ -253,7 +216,8 @@ class HotwordService : Service(), RecognitionListener {
                 HotwordEventBus.notifyWakeWord()
                 postWakeNotification()
             }
-        } catch (_: JSONException) {}
+        } catch (_: JSONException) {
+        }
     }
 
     override fun onFinalResult(hypothesis: String?) {}
@@ -262,24 +226,14 @@ class HotwordService : Service(), RecognitionListener {
         Log.w(TAG, "Vosk error: ${e?.message}")
         serviceScope.launch {
             delay(1_500)
-            if (!HotwordEventBus.isPaused.value && model != null && isBtHeadsetConnected) {
-                startListening()
-            }
+            updateListeningState()
         }
     }
 
     override fun onTimeout() {
-        if (!HotwordEventBus.isPaused.value && isBtHeadsetConnected) startListening()
+        updateListeningState()
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    /**
-     * Plays a short confirmation beep immediately through the active audio output
-     * (BT headset if connected, phone speaker otherwise) to tell the user the wake
-     * word was heard and the assistant is now listening.
-     * Uses ToneGenerator on STREAM_MUSIC so it routes to the same device as voice output.
-     */
     private fun playWakeBeep() {
         runCatching {
             val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
@@ -299,24 +253,37 @@ class HotwordService : Service(), RecognitionListener {
         return text.contains(configuredWord) || text == shortName
     }
 
-    // ── Notifications ─────────────────────────────────────────────────────────
-
     private fun buildNotification(): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Wake Word Detection",
                 NotificationManager.IMPORTANCE_LOW,
-            ).apply { description = "Listening for \"Hey Gervis\"" }
+            ).apply {
+                description = "Wake word readiness and listening state"
+            }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
+
+        val wakeWord = AppPreferences.getWakeWord(this)
+        val contentText = if (deviceState.isWakeWordReady) {
+            "Listening for \"$wakeWord\"..."
+        } else {
+            "Connect Meta glasses or a Bluetooth audio device to enable wake word"
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("SpecTalk")
-            .setContentText("Listening for \"Hey Gervis\"…")
+            .setContentText(contentText)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setSilent(true)
             .setOngoing(true)
             .build()
+    }
+
+    private fun refreshForegroundNotification() {
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        notificationManager.notify(NOTIFICATION_ID, buildNotification())
     }
 
     private fun postWakeNotification() {
@@ -337,13 +304,15 @@ class HotwordService : Service(), RecognitionListener {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val fullScreenPi = PendingIntent.getActivity(
-            this, 0, activityIntent,
+            this,
+            0,
+            activityIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
         val notification = NotificationCompat.Builder(this, WAKE_CHANNEL_ID)
             .setContentTitle("Gervis")
-            .setContentText("Listening…")
+            .setContentText("Listening...")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -353,8 +322,6 @@ class HotwordService : Service(), RecognitionListener {
 
         nm.notify(WAKE_NOTIFICATION_ID, notification)
     }
-
-    // ── Asset copy ───────────────────────────────────────────────────────────
 
     @Throws(IOException::class)
     private fun copyAssets(srcPath: String, dstFile: File) {

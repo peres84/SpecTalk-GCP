@@ -10,9 +10,7 @@ data class VoiceSessionUiState(
     val turns: List<ConversationTurn> = emptyList(),
     val activeJobDescription: String = "",
     val recentError: String? = null,
-    val isBtHeadsetConnected: Boolean = false,
+    val isWakeWordDeviceConnected: Boolean = false,
     /** The conversation ID currently in use. Set once the session resolves a conversation. */
     val conversationId: String? = null,
-    /** Whether this conversation is the "active" one — the target of wake-word detection. */
-    val isConversationActive: Boolean = false,
 )

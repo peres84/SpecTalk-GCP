@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from db.database import get_db
 from db.models import Conversation
@@ -25,11 +24,15 @@ async def start_voice_session(
     """
     Create a new conversation and return its ID.
     The Android app uses this conversation_id to open WS /ws/voice/{conversation_id}.
-    Phase 3 will check for pending resume context and inject it into the Gemini session.
+    Location context is provided on-demand via the WebSocket request_location / location_response
+    exchange rather than at session start.
     """
     user_id = uuid.UUID(payload["sub"])
 
-    conversation = Conversation(user_id=user_id, state="idle")
+    conversation = Conversation(
+        user_id=user_id,
+        state="idle",
+    )
     db.add(conversation)
     await db.commit()
     await db.refresh(conversation)

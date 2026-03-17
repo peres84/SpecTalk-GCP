@@ -212,7 +212,7 @@ infrastructure in place. No Gemini yet — just the foundation.
 ---
 
 ## Phase 3 — Backend: Voice Agent + Gemini Live
-**Status: `🔄 IN PROGRESS — awaiting approval`**
+**Status: `🔄 IN PROGRESS — maps confirmed working, awaiting final approval`**
 
 Goal: The backend becomes the full voice agent. Gemini Live session runs server-side. The audio
 WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `maps_tool` work.
@@ -283,7 +283,7 @@ WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `
 
 - [x] Wake word on phone → Gemini session starts on backend → voice conversation works end-to-end
 - [X] `search_tool` executes on backend — Gemini speaks a grounded search result naturally
-- [ ] `maps_tool` executes on backend — Gemini speaks a grounded maps result naturally
+- [x] `maps_tool` executes on backend — Gemini speaks a grounded maps result naturally
 - [x] Barge-in / interrupted works: phone audio buffer clears immediately
 - [x] Turns persist to PostgreSQL in real time (visible in DB after a conversation)
 - [x] No Gemini API key exists anywhere on the Android app

@@ -1,35 +1,26 @@
 package com.spectalk.app.voice
 
-import android.annotation.SuppressLint
 import android.app.Application
-import android.bluetooth.BluetoothHeadset
-import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.SoundPool
 import android.util.Log
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.spectalk.app.R
 import com.spectalk.app.SpecTalkApplication
-import com.spectalk.app.config.BackendConfig
-import com.spectalk.app.conversations.ConversationRepository
-import com.spectalk.app.hotword.HotwordEventBus
-import com.spectalk.app.hotword.HotwordService
 import com.spectalk.app.audio.AndroidAudioRecorder
 import com.spectalk.app.audio.PcmAudioPlayer
+import com.spectalk.app.config.BackendConfig
+import com.spectalk.app.conversations.ConversationRepository
+import com.spectalk.app.device.ConnectedDeviceMonitor
+import com.spectalk.app.hotword.HotwordEventBus
+import com.spectalk.app.location.UserLocationContext
+import com.spectalk.app.settings.AppPreferences
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -40,7 +31,9 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         private const val CONNECT_TIMEOUT_MS = 12_000L
     }
 
-    private val tokenRepository = (application as SpecTalkApplication).tokenRepository
+    private val app = application as SpecTalkApplication
+    private val tokenRepository = app.tokenRepository
+    private val userLocationRepository = app.userLocationRepository
     private val conversationRepository = ConversationRepository()
 
     private val _uiState = MutableStateFlow(VoiceSessionUiState())
@@ -57,31 +50,34 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     private var soundPool: SoundPool? = null
     private var activationSoundId: Int = 0
 
+    // Updated on every outgoing audio chunk. The inactivity timer checks this so it
+    // doesn't fire while the user is actively speaking (before a transcript arrives).
+    @Volatile private var lastAudioSentTime: Long = 0L
+
     init {
         initActivationSound()
-        observeBluetoothHeadset()
+        observeConnectedDevices()
 
-        // Wake word detected → start voice session automatically
         viewModelScope.launch {
             HotwordEventBus.wakeWordDetected.collect { startSession() }
         }
 
-        // Pick up wake events that fired while the ViewModel was dead
         if (HotwordEventBus.consumePendingWakeWord()) {
             startSession()
         }
     }
 
-    // ── Session lifecycle ────────────────────────────────────────────────────
-
-    fun startSession(conversationId: String? = null, isActive: Boolean = true) {
+    fun startSession(conversationId: String? = null) {
         if (_uiState.value.isConnecting || _uiState.value.isConnected) return
 
-        // Pause hotword before taking the mic
         HotwordEventBus.isPaused.value = true
         disconnect(resumeHotword = false)
+        // Set isConnecting synchronously BEFORE launching the coroutine so that any
+        // subsequent call to startSession() on the main thread sees the flag immediately
+        // and returns early — prevents two WebSocket connections if startSession() is
+        // called twice before the coroutine runs.
+        _uiState.update { it.copy(isConnecting = true) }
 
-        // Play activation sound first, then open WebSocket
         viewModelScope.launch {
             playActivationSound()
 
@@ -92,7 +88,6 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 return@launch
             }
 
-            // Load past turn history when resuming an existing conversation
             if (conversationId != null) {
                 val history = runCatching {
                     conversationRepository.fetchTurns(jwt, conversationId)
@@ -102,9 +97,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
 
-            // Get a conversation ID from the backend (or use the one provided, e.g. from a notification)
             val resolvedConversationId = conversationId ?: runCatching {
-                tokenRepository.startVoiceSession()
+                tokenRepository.startVoiceSession(null)
             }.getOrElse { e ->
                 Log.e(TAG, "Failed to start voice session: ${e.message}", e)
                 setError("Could not start session: ${e.message}")
@@ -112,7 +106,10 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 return@launch
             }
 
-            val client = BackendVoiceClient(backendUrl = BackendConfig.wsBaseUrl, productJwt = jwt)
+            val client = BackendVoiceClient(
+                backendUrl = BackendConfig.wsBaseUrl,
+                productJwt = jwt,
+            )
             val player = PcmAudioPlayer()
             player.start(viewModelScope)
 
@@ -121,12 +118,10 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
 
             _uiState.update {
                 it.copy(
-                    isConnecting = true,
                     isConnected = false,
                     isMicStreaming = false,
-                    statusMessage = "Connecting to Gervis…",
+                    statusMessage = "Connecting to Gervis...",
                     conversationId = resolvedConversationId,
-                    isConversationActive = isActive,
                 )
             }
 
@@ -173,17 +168,29 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         _uiState.update { it.copy(recentError = null) }
     }
 
-    // ── Client event handler ─────────────────────────────────────────────────
-
     private fun handleClientEvent(event: VoiceClientEvent) {
         when (event) {
             is VoiceClientEvent.Connected -> {
                 connectTimeoutJob?.cancel()
+                // Proactively send location on connect so the backend cache is warm
+                // before the user speaks. The on-demand request_location flow is still
+                // the primary path; this just avoids a round-trip on the first map query.
+                viewModelScope.launch {
+                    val ctx = resolveLocationContext()
+                    if (ctx != null) {
+                        backendClient?.sendLocationResponse(
+                            ctx.latitude,
+                            ctx.longitude,
+                            ctx.accuracyMeters,
+                            ctx.locationLabel,
+                        )
+                    }
+                }
                 _uiState.update {
                     it.copy(
                         isConnecting = false,
                         isConnected = true,
-                        statusMessage = "Connected — listening…",
+                        statusMessage = "Connected — listening...",
                     )
                 }
                 startMicrophone()
@@ -205,7 +212,6 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 }
                 resetInactivityTimer()
 
-                // "Goodbye" detected → end session hands-free
                 val lower = event.text.lowercase().trim()
                 if (lower.contains("goodbye") || lower.contains("good bye")) {
                     Log.i(TAG, "Goodbye detected — ending voice session.")
@@ -231,6 +237,22 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             is VoiceClientEvent.JobUpdate -> {
                 if (event.status == "completed" || event.status == "failed") {
                     _uiState.update { it.copy(activeJobDescription = "") }
+                }
+            }
+
+            is VoiceClientEvent.LocationRequest -> {
+                viewModelScope.launch {
+                    val ctx = resolveLocationContext()
+                    if (ctx != null) {
+                        backendClient?.sendLocationResponse(
+                            ctx.latitude,
+                            ctx.longitude,
+                            ctx.accuracyMeters,
+                            ctx.locationLabel,
+                        )
+                    } else {
+                        Log.w(TAG, "Location requested by backend but location is unavailable.")
+                    }
                 }
             }
 
@@ -268,12 +290,10 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             VoiceClientEvent.Connecting -> {
-                _uiState.update { it.copy(statusMessage = "Connecting…") }
+                _uiState.update { it.copy(statusMessage = "Connecting...") }
             }
         }
     }
-
-    // ── Microphone ───────────────────────────────────────────────────────────
 
     private fun startMicrophone() {
         if (_uiState.value.isMicStreaming) return
@@ -281,6 +301,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         val recorder = audioRecorder ?: AndroidAudioRecorder().also { audioRecorder = it }
 
         val started = recorder.start(viewModelScope) { chunk ->
+            lastAudioSentTime = System.currentTimeMillis()
             client.sendAudioChunk(chunk)
         }
 
@@ -301,15 +322,17 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         _uiState.update { it.copy(isMicStreaming = false) }
     }
 
-    // ── Inactivity timer ─────────────────────────────────────────────────────
-
     private fun resetInactivityTimer() {
         inactivityJob?.cancel()
         inactivityJob = viewModelScope.launch {
             while (true) {
                 delay(INACTIVITY_TIMEOUT_MS)
-                // Don't disconnect while Gervis is still speaking
+                // Don't disconnect while Gervis is still playing audio.
                 if (audioPlayer?.hasPendingAudio == true) continue
+                // Don't disconnect while the user is actively speaking. Audio chunks
+                // arrive ~every 64ms while speaking, so if one arrived recently the
+                // user is mid-utterance and the transcript just hasn't come back yet.
+                if (System.currentTimeMillis() - lastAudioSentTime < INACTIVITY_TIMEOUT_MS) continue
                 Log.i(TAG, "Inactivity timeout — ending voice session.")
                 backendClient?.sendEndOfSpeech()
                 disconnect()
@@ -325,8 +348,6 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         connectTimeoutJob = null
     }
 
-    // ── Activation sound ─────────────────────────────────────────────────────
-
     private fun initActivationSound() {
         val pool = SoundPool.Builder()
             .setMaxStreams(1)
@@ -338,76 +359,30 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             )
             .build()
         soundPool = pool
-        // Load returns 0 if the resource doesn't exist yet — safe to call
         activationSoundId = runCatching {
             pool.load(getApplication(), R.raw.activation_sound, 1)
         }.getOrDefault(0)
     }
 
     private suspend fun playActivationSound() {
-        // The wake beep is now played immediately in HotwordService when the wake word fires.
-        // Keep a short delay here so the WebSocket opens after the tone has finished.
         delay(300)
     }
 
-    // ── Bluetooth headset monitoring ─────────────────────────────────────────
-
-    @SuppressLint("MissingPermission")
-    private fun observeBluetoothHeadset() {
-        val app = getApplication<Application>()
-
-        // BLUETOOTH_CONNECT is a runtime permission on API 31+. Wrap all BT access in
-        // runCatching so a missing permission degrades gracefully instead of crashing.
-        val alreadyConnected = runCatching {
-            val btManager = app.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            btManager?.adapter
-                ?.getProfileConnectionState(BluetoothProfile.HEADSET) == BluetoothProfile.STATE_CONNECTED
-        }.getOrDefault(false)
-
-        if (alreadyConnected) {
-            _uiState.update { it.copy(isBtHeadsetConnected = true) }
-            startHotwordService()
-        }
-
+    private fun observeConnectedDevices() {
         viewModelScope.launch {
-            callbackFlow {
-                val receiver = object : BroadcastReceiver() {
-                    override fun onReceive(context: Context, intent: Intent) {
-                        val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)
-                        trySend(state == BluetoothProfile.STATE_CONNECTED)
-                    }
-                }
-                runCatching {
-                    ContextCompat.registerReceiver(
-                        app,
-                        receiver,
-                        IntentFilter(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED),
-                        ContextCompat.RECEIVER_NOT_EXPORTED,
-                    )
-                }
-                awaitClose { runCatching { app.unregisterReceiver(receiver) } }
-            }.collect { isConnected ->
-                _uiState.update { it.copy(isBtHeadsetConnected = isConnected) }
-                if (isConnected) startHotwordService()
+            ConnectedDeviceMonitor.state.collect { state ->
+                _uiState.update { it.copy(isWakeWordDeviceConnected = state.isWakeWordReady) }
             }
         }
     }
 
-    private fun startHotwordService() {
-        HotwordEventBus.resume()
-        runCatching {
-            getApplication<Application>()
-                .startForegroundService(Intent(getApplication(), HotwordService::class.java))
-        }.onFailure { e -> Log.w(TAG, "Could not start HotwordService: ${e.message}") }
+    private suspend fun resolveLocationContext(): UserLocationContext? {
+        if (!AppPreferences.isLocationSharingEnabled(getApplication())) return null
+        return runCatching { userLocationRepository.getLocationContext() }
+            .onFailure { e -> Log.w(TAG, "Could not resolve location context: ${e.message}") }
+            .getOrNull()
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    /**
-     * Append or update the last turn in the list.
-     * If the last turn has the same role, update its text (streaming partial update).
-     * Otherwise append a new turn. This handles both incremental and final transcripts.
-     */
     private fun upsertTurn(
         turns: List<ConversationTurn>,
         role: String,
@@ -421,29 +396,6 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /**
-     * Toggle whether this conversation is the "active" one (the wake-word target).
-     * Optimistically updates the UI; calls the backend PATCH in the background.
-     * When activating, the backend is expected to deactivate all other conversations.
-     */
-    fun toggleActivation() {
-        val convId = _uiState.value.conversationId ?: return
-        val jwt = getProductJwt()
-        if (jwt.isBlank()) return
-        val nowActive = !_uiState.value.isConversationActive
-        _uiState.update { it.copy(isConversationActive = nowActive) }
-        viewModelScope.launch {
-            runCatching {
-                conversationRepository.updateConversationState(
-                    jwt, convId, if (nowActive) "active" else "idle"
-                )
-            }.onFailure {
-                // Revert on failure
-                _uiState.update { it.copy(isConversationActive = !nowActive) }
-            }
-        }
-    }
-
     private fun getProductJwt(): String = tokenRepository.getProductJwt()
 
     private fun setError(message: String) {
@@ -454,9 +406,6 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         disconnect()
         soundPool?.release()
         soundPool = null
-        // Do NOT stop HotwordService here — it must keep running as a foreground
-        // service so the wake word works when the app is in the background or the
-        // screen is locked. The service self-manages via Bluetooth state.
         super.onCleared()
     }
 }

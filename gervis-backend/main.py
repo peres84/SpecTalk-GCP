@@ -19,6 +19,9 @@ async def lifespan(app: FastAPI):
     if settings.gemini_api_key:
         os.environ.setdefault("GOOGLE_API_KEY", settings.gemini_api_key)
 
+    from services.tracing import setup_tracing
+    setup_tracing()
+
     await init_db()
 
     from services.gemini_live_client import gemini_live_client

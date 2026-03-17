@@ -1,5 +1,6 @@
 package com.spectalk.app.voice
 
+import com.spectalk.app.location.UserLocationContext
 import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -23,6 +24,8 @@ sealed interface VoiceClientEvent {
     data class StateUpdate(val state: String) : VoiceClientEvent
     data class JobStarted(val jobId: String, val description: String) : VoiceClientEvent
     data class JobUpdate(val jobId: String, val status: String, val message: String) : VoiceClientEvent
+    /** Backend is requesting the device's current location (e.g. for the Maps tool). */
+    data object LocationRequest : VoiceClientEvent
     data class Error(val message: String) : VoiceClientEvent
     data class Disconnected(val reason: String) : VoiceClientEvent
 }
@@ -118,6 +121,22 @@ class BackendVoiceClient(
         webSocket?.send(JSONObject().put("type", "end_of_speech").toString())
     }
 
+    fun sendLocationResponse(
+        latitude: Double,
+        longitude: Double,
+        accuracyMeters: Float?,
+        locationLabel: String?,
+    ) {
+        if (!isConnected) return
+        val payload = JSONObject()
+            .put("type", "location_response")
+            .put("latitude", latitude)
+            .put("longitude", longitude)
+        accuracyMeters?.let { payload.put("accuracy_meters", it.toDouble()) }
+        locationLabel?.let { payload.put("location_label", it) }
+        webSocket?.send(payload.toString())
+    }
+
     /** Signal barge-in (user interrupted Gervis). */
     fun sendInterrupt() {
         if (!isConnected) return
@@ -158,6 +177,7 @@ class BackendVoiceClient(
                 val msg = json.optString("message")
                 _events.tryEmit(VoiceClientEvent.JobUpdate(jobId, status, msg))
             }
+            "request_location" -> _events.tryEmit(VoiceClientEvent.LocationRequest)
             "error" -> {
                 val msg = json.optString("message", "Unknown backend error.")
                 _events.tryEmit(VoiceClientEvent.Error(msg))

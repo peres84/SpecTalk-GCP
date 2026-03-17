@@ -26,7 +26,7 @@ def _build_run_config():
 
     kwargs: dict = dict(
         streaming_mode="bidi",
-        response_modalities=["AUDIO"],
+        response_modalities=[types.Modality.AUDIO],
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
     )
@@ -77,7 +77,12 @@ class GeminiLiveClient:
         return self._runner
 
     async def get_or_create_session(self, user_id: str, session_id: str):
-        """Get an existing ADK session or create a new one."""
+        """Get an existing ADK session or create a new one.
+
+        conversation_id is stored as session state so tool_context.state can
+        look up the location_channels registry without relying on dict mutation
+        after the fact (InMemorySessionService may return copies, not references).
+        """
         session = await self.runner.session_service.get_session(
             app_name=settings.adk_app_name,
             user_id=user_id,
@@ -88,6 +93,7 @@ class GeminiLiveClient:
                 app_name=settings.adk_app_name,
                 user_id=user_id,
                 session_id=session_id,
+                state={"conversation_id": session_id},
             )
         return session
 
