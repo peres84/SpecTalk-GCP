@@ -7,7 +7,61 @@ Newest entries at the top.
 
 ## [Unreleased] — Phase 1 + Phase 3 integration
 
+### Added
+
+#### Swipe-to-delete conversations
+- Swipe a conversation row left on HomeScreen to reveal a red delete background with a
+  trash icon. Releasing confirms deletion.
+- Deletion is optimistic — the item disappears immediately from the list. If the network
+  call fails, the list is restored automatically.
+- Calls `DELETE /conversations/{id}` with the product JWT.
+- **Files:** `conversations/ConversationRepository.kt`, `conversations/HomeViewModel.kt`,
+  `ui/screens/HomeScreen.kt`
+
 ### Fixed
+
+#### `HotwordService` crashed on startup (second BT permission crash)
+- **Symptom:** App crashed immediately after granting microphone permission, before the
+  wake notification could even appear.
+- **Root cause:** `HotwordService.onCreate()` called `getProfileConnectionState()` directly
+  (line 102), hitting the same `BLUETOOTH_CONNECT` `SecurityException` that was previously
+  fixed in `VoiceAgentViewModel` but had been missed in the service itself.
+- **Fix:** Wrapped the BT state read in `runCatching` — defaults to `false` (no headset)
+  if the permission is not granted.
+- **File:** `hotword/HotwordService.kt`
+
+#### Wake word never detected without a Bluetooth headset
+- **Symptom:** Even after the service started, saying "Hey Gervis" did nothing on a
+  phone without AirPods or Meta Glasses connected.
+- **Root cause:** Every Vosk start/resume path in `HotwordService` was gated behind
+  `isBtHeadsetConnected`. The service started but immediately idled waiting for a BT
+  headset to connect. On BT disconnect it also called `stopSelf()`, killing the service.
+- **Fix:** Removed `isBtHeadsetConnected` as a gate for Vosk. The recogniser now starts
+  as long as the model is loaded and the session is not paused — phone mic is used when
+  no headset is connected. BT connect/disconnect still restarts Vosk (for audio routing
+  changes) but no longer stops the service on disconnect.
+- **File:** `hotword/HotwordService.kt`
+
+#### `HotwordService` never started on app launch
+- **Symptom:** No "SpecTalk — Listening for Hey Gervis…" notification on HomeScreen.
+  Wake word never worked even with a BT headset.
+- **Root cause:** `startHotwordService()` was only called from `VoiceAgentViewModel`
+  when a BT headset connected. There was no call on app launch or HomeScreen entry.
+- **Fix:** `HomeScreen` now requests `RECORD_AUDIO` (and `POST_NOTIFICATIONS` on
+  Android 13+) on first entry, then starts `HotwordService` immediately. The service
+  also restarts on every HomeScreen entry so wake word resumes after a session ends.
+- **File:** `ui/screens/HomeScreen.kt`
+
+#### `last_turn_summary` displayed as "null" text in conversation rows
+- **Symptom:** Conversation rows showed the word "null" instead of a summary or the
+  fallback "Voice conversation".
+- **Root cause:** Backend was serializing a missing summary as the string `"null"`
+  instead of JSON `null`. The Android `takeIf { it.isNotBlank() }` check passed because
+  `"null"` is not blank.
+- **Fix (Android workaround):** Added `&& it != "null"` to the filter so the literal
+  string `"null"` is treated the same as a missing value, falling back to
+  `"Voice conversation"`. Backend fix also applied separately.
+- **File:** `conversations/ConversationRepository.kt`
 
 #### `HotwordService` never started — wake word never detected
 - **Symptom:** Saying "Hey Gervis" did nothing. The wake word detector never activated unless
@@ -83,15 +137,6 @@ Newest entries at the top.
 ---
 
 ## Known Issues
-
-### `last_turn_summary` displays "null" (string) in conversation rows
-- **Symptom:** Conversation rows show the text "null" instead of a summary or the fallback
-  "Voice conversation".
-- **Root cause:** The backend returns the string `"null"` for `last_turn_summary` instead of
-  JSON `null`. The Android fallback (`?: "Voice conversation"`) only triggers on a true JSON
-  null, not the literal string.
-- **Fix required:** Backend — `last_turn_summary` should be omitted or set to `null` in JSON
-  when there is no summary, not the string `"null"`.
 
 ### Wake word does not survive app process kill or phone reboot
 - **Symptom:** If the app is swiped away from recents or the phone is rebooted, `HotwordService`
