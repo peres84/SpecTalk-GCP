@@ -88,18 +88,11 @@ async def _upstream_task(
                 msg_type = msg.get("type")
 
                 if msg_type == "end_of_speech":
-                    # Phone signals end of speech.
-                    # types.ActivityEnd() is available in google-genai >= 0.8 / ADK >= 1.0.
-                    # If not available in the installed version, this will raise AttributeError
-                    # and we fall through to the except block, logging a warning instead.
-                    try:
-                        live_request_queue.send_realtime(types.ActivityEnd())
-                    except AttributeError:
-                        logger.warning(
-                            f"[{conversation_id}] types.ActivityEnd not available — "
-                            "end_of_speech signal skipped (VAD will handle silence detection)"
-                        )
-                    logger.debug(f"[{conversation_id}] end_of_speech received")
+                    # ADK 1.1.1: send_realtime() only accepts types.Blob — passing
+                    # types.ActivityEnd() creates a LiveRequest with a null blob that
+                    # Gemini rejects with ValueError. Skip the signal; VAD handles
+                    # silence detection via RunConfig.realtime_input_config on ADK >= 1.2.
+                    logger.debug(f"[{conversation_id}] end_of_speech received (VAD handles)")
 
                 elif msg_type == "image":
                     # Inject image into the ADK session

@@ -8,6 +8,33 @@ Entries are ordered newest-first within each phase.
 ## Phase 3 — Voice Agent + Gemini Live
 > Status: 🔄 In Progress
 
+### [Phase 3.8] — ActivityEnd crash fix + maps tool schema cleanup
+**Files:** `ws/voice_handler.py`, `tools/maps_tool.py`
+
+**`voice_handler.py` — `send_realtime(types.ActivityEnd())` removed:**
+
+In ADK 1.1.1, `LiveRequestQueue.send_realtime()` only accepts `types.Blob`. Passing
+`types.ActivityEnd()` caused ADK to build a `LiveRequest` with a null blob
+(`{data: None, mime_type: None}`). Gemini's `_parse_client_message` rejected it:
+`ValueError: Unsupported input type "<class 'dict'>"`, crashing the downstream task
+and closing the WebSocket immediately after connection.
+
+Fix: removed the `send_realtime(types.ActivityEnd())` call entirely. The `end_of_speech`
+control message from the phone is now acknowledged with a debug log only. VAD
+(`realtime_input_config` in ADK >= 1.2) will handle silence detection automatically
+once the ADK version is upgraded.
+
+**`tools/maps_tool.py` — lat/lon params removed:**
+
+`float = 0.0` defaults triggered ADK schema warnings ("Default value is not supported in
+function declaration schema for Google AI") on every session start — one warning per
+optional param. Removed `latitude` and `longitude` from the function signature entirely.
+The `location: str` param (e.g. "downtown Seattle") provides sufficient context for Maps
+grounding. GPS-coordinate precision can be re-added in a future phase by declaring a manual
+function schema instead of relying on automatic parsing.
+
+---
+
 ### [Phase 3.7] — find_nearby_places Optional[float] ADK parse fix
 **File:** `tools/maps_tool.py`
 
@@ -17,10 +44,8 @@ signature to build the Gemini function declaration. The `latitude` and `longitud
 triggered a `ValueError`, crashing the agent initialization and closing the WebSocket before
 the session started.
 
-Fix: changed both parameters from `float | None = None` to `float = 0.0`. The `0.0` value
-acts as a sentinel — the tool skips `ToolConfig.retrieval_config` when either coordinate is
-`0.0`. This satisfies ADK's requirement for simple type annotations while preserving the
-optional GPS-precision behaviour.
+Fix: changed both parameters from `float | None = None` to `float = 0.0`. (Superseded by
+Phase 3.8 which removes the params entirely to also eliminate schema default warnings.)
 
 ---
 

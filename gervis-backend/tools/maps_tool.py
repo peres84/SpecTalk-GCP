@@ -13,19 +13,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def find_nearby_places(
-    query: str,
-    location: str,
-    latitude: float = 0.0,
-    longitude: float = 0.0,
-) -> dict:
+async def find_nearby_places(query: str, location: str) -> dict:
     """Find places and location information using Google Maps grounding.
 
     Args:
         query: What to look for (e.g., "best Italian restaurants", "nearest pharmacy")
         location: Where to search (e.g., "downtown Seattle", "Times Square NYC")
-        latitude: Latitude for precise user location context (0.0 = not provided)
-        longitude: Longitude for precise user location context (0.0 = not provided)
 
     Returns:
         A dict with spoken_summary (natural language, voice-ready) and sources list.
@@ -46,19 +39,9 @@ async def find_nearby_places(
             "name and a one-line description for each. No markdown or bullet points."
         )
 
-        tool_config = None
-        if latitude != 0.0 and longitude != 0.0:
-            tool_config = types.ToolConfig(
-                retrieval_config=types.RetrievalConfig(
-                    lat_lng=types.LatLng(latitude=latitude, longitude=longitude)
-                )
-            )
-
         gen_config_kwargs: dict = {
             "tools": [types.Tool(google_maps=types.GoogleMaps())],
         }
-        if tool_config:
-            gen_config_kwargs["tool_config"] = tool_config
 
         # Sync call — run in executor to avoid blocking the event loop
         loop = asyncio.get_event_loop()
