@@ -18,6 +18,7 @@ import androidx.lifecycle.viewModelScope
 import com.spectalk.app.R
 import com.spectalk.app.SpecTalkApplication
 import com.spectalk.app.config.BackendConfig
+import com.spectalk.app.conversations.ConversationRepository
 import com.spectalk.app.hotword.HotwordEventBus
 import com.spectalk.app.hotword.HotwordService
 import com.spectalk.app.audio.AndroidAudioRecorder
@@ -40,6 +41,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private val tokenRepository = (application as SpecTalkApplication).tokenRepository
+    private val conversationRepository = ConversationRepository()
 
     private val _uiState = MutableStateFlow(VoiceSessionUiState())
     val uiState: StateFlow<VoiceSessionUiState> = _uiState.asStateFlow()
@@ -88,6 +90,16 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 setError("Not signed in — please log in again.")
                 HotwordEventBus.resume()
                 return@launch
+            }
+
+            // Load past turn history when resuming an existing conversation
+            if (conversationId != null) {
+                val history = runCatching {
+                    conversationRepository.fetchTurns(jwt, conversationId)
+                }.getOrDefault(emptyList())
+                if (history.isNotEmpty()) {
+                    _uiState.update { it.copy(turns = history) }
+                }
             }
 
             // Get a conversation ID from the backend (or use the one provided, e.g. from a notification)

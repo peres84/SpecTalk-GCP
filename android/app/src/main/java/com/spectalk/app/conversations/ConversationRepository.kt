@@ -1,6 +1,7 @@
 package com.spectalk.app.conversations
 
 import com.spectalk.app.config.BackendConfig
+import com.spectalk.app.voice.ConversationTurn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -52,4 +53,36 @@ class ConversationRepository(private val http: OkHttpClient = defaultClient) {
             }
         }
     }
+
+    /**
+     * Fetch turn history for a conversation, oldest-first (natural chat order).
+     * Returns an empty list on any error so callers can proceed without history.
+     */
+    suspend fun fetchTurns(jwt: String, conversationId: String): List<ConversationTurn> =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("${BackendConfig.baseUrl}/conversations/$conversationId/turns?limit=100")
+                .get()
+                .header("Authorization", "Bearer $jwt")
+                .build()
+
+            val response = runCatching { http.newCall(request).execute() }.getOrNull()
+                ?: return@withContext emptyList()
+
+            if (!response.isSuccessful) return@withContext emptyList()
+
+            val body = response.body?.string() ?: return@withContext emptyList()
+            val array = runCatching { JSONArray(body) }.getOrNull()
+                ?: return@withContext emptyList()
+
+            buildList {
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val role = obj.optString("role").takeIf { it == "user" || it == "assistant" }
+                        ?: continue
+                    val text = obj.optString("text").takeIf { it.isNotBlank() } ?: continue
+                    add(ConversationTurn(role = role, text = text))
+                }
+            }
+        }
 }

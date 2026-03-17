@@ -111,10 +111,10 @@ val turns: List<ConversationTurn>   // data class ConversationTurn(val role: Str
 `VoiceSessionScreen` renders `turns` as a `LazyColumn` of chat bubbles, auto-scrolling to
 the latest turn on each update.
 
-**Note:** This list covers only the **current session**. Loading past turns from previous
-sessions requires `GET /conversations/{id}/turns` from the backend (not yet implemented as
-of Phase 3). Once available, wire it up in `ConversationRepository` and pre-populate `turns`
-in the ViewModel when `conversationId` is non-null.
+When opening an **existing** conversation (`conversationId != null`), `VoiceAgentViewModel`
+fetches past turns from `GET /conversations/{id}/turns?limit=100` via `ConversationRepository.fetchTurns()`
+before the WebSocket opens. The history pre-populates `turns` so the user sees the full chat
+immediately. New turns from the live session are then appended on top.
 
 ---
 
