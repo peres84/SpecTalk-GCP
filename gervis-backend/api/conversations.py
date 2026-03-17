@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional
 
 from db.database import get_db
-from db.models import Conversation
+from db.models import Conversation, Turn
 from middleware.auth import require_auth
 
 import uuid
@@ -84,3 +84,56 @@ async def get_conversation(
         created_at=conversation.created_at.isoformat(),
         updated_at=conversation.updated_at.isoformat(),
     )
+
+
+class TurnItem(BaseModel):
+    turn_id: str
+    role: str
+    text: Optional[str]
+    event_type: Optional[str]
+    created_at: str
+
+
+@router.get("/{conversation_id}/turns", response_model=list[TurnItem])
+async def list_turns(
+    conversation_id: str,
+    payload: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=100, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Return the turn history for a conversation. User must own the conversation."""
+    user_id = uuid.UUID(payload["sub"])
+    try:
+        conv_id = uuid.UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    # Verify ownership
+    result = await db.execute(
+        select(Conversation.id).where(
+            Conversation.id == conv_id,
+            Conversation.user_id == user_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    result = await db.execute(
+        select(Turn)
+        .where(Turn.conversation_id == conv_id)
+        .order_by(Turn.created_at.asc())
+        .offset(offset)
+        .limit(limit)
+    )
+    turns = result.scalars().all()
+    return [
+        TurnItem(
+            turn_id=str(t.id),
+            role=t.role,
+            text=t.text,
+            event_type=t.event_type,
+            created_at=t.created_at.isoformat(),
+        )
+        for t in turns
+    ]

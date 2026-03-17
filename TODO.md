@@ -212,7 +212,7 @@ infrastructure in place. No Gemini yet — just the foundation.
 ---
 
 ## Phase 3 — Backend: Voice Agent + Gemini Live
-**Status: `🔲 NOT STARTED`**
+**Status: `🔄 IN PROGRESS`**
 
 Goal: The backend becomes the full voice agent. Gemini Live session runs server-side. The audio
 WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `maps_tool` work.
@@ -220,46 +220,43 @@ WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `
 ### Tasks
 
 #### Backend — Audio Bridge
-- [ ] `services/gemini_live_client.py`
-      - Connect to Gemini Live using `google-genai` SDK (fetch docs with `/gemini-live-api-dev`)
-      - OR use ADK BidiGenerateContent / LiveRequestQueue pattern (fetch ADK docs with
-        `/get-api-docs` — prefer ADK-native if available and stable)
-      - Handle audio input chunks, audio output chunks, transcription events, `interrupted`
-      - Handle session reconnection and context re-injection
-      - Configure VAD: `START_SENSITIVITY_LOW`, `END_SENSITIVITY_LOW`, `silenceDurationMs: 320`
+- [x] `services/gemini_live_client.py`
+      - ADK-native LiveRequestQueue + InMemoryRunner pattern
       - Model: `gemini-2.5-flash-native-audio-preview-12-2025`
-      - Enable `inputAudioTranscription` and `outputAudioTranscription`
-- [ ] `services/audio_session_manager.py`
-      - Manage per-conversation `GeminiLiveVoiceAgent` instances
-      - Handle grace period on phone disconnect (keep Gemini session open 30s)
-      - Spawn / resume agent on new phone connection
-- [ ] `ws/voice_handler.py`
-      - `WS /ws/voice/{conversation_id}` — authenticated by JWT on HTTP upgrade
-      - Binary frame forwarding: phone PCM → Gemini (zero-copy, TCP_NODELAY)
-      - Binary frame forwarding: Gemini PCM → phone (zero-copy, interrupt-aware queue)
-      - JSON control message dispatch to phone
-      - Handle `end_of_speech` and `interrupt` control messages from phone
-      - Handle `image` control messages — inject into Gemini session
-- [ ] `services/conversation_service.py`
-      - Persist user turns from Gemini `inputTranscription` events
-      - Persist assistant turns from Gemini `outputTranscription` events
-      - State machine transitions
-      - `working_memory` JSONB updates
+      - VAD: START_SENSITIVITY_LOW, END_SENSITIVITY_LOW, silenceDurationMs: 320
+      - inputAudioTranscription + outputAudioTranscription enabled
+      - Session resumption with transparent=True
+- [x] `services/audio_session_manager.py`
+      - Per-conversation SessionEntry tracking
+      - 30s grace period on phone disconnect (cancels on reconnect)
+      - Lock-safe async operations
+- [x] `ws/voice_handler.py`
+      - `WS /ws/voice/{conversation_id}` — JWT auth via query param or Authorization header
+      - Binary PCM forwarding: phone → ADK (zero-copy via send_realtime)
+      - Binary PCM forwarding: ADK audio events → phone (zero-copy)
+      - `interrupted` forwarded to phone BEFORE any audio (critical for barge-in UX)
+      - Handles `end_of_speech` and `image` control messages from phone
+      - `turn_complete`, `input_transcript`, `output_transcript` JSON events to phone
+- [x] `services/conversation_service.py`
+      - `persist_turn()` — persists user/assistant turns from transcription events
+      - `set_conversation_active()` / `set_conversation_idle()` — state transitions
 
 #### Backend — Orchestrator Agent
-- [ ] `agents/orchestrator.py`
-      - ADK root agent with Gervis system instruction and personality
-      - Tool list: `search_tool`, `maps_tool`
-      - Intercept Gemini tool calls, execute via ADK, inject results back
-      - Handle backend-gated states (`awaiting_confirmation`, `awaiting_user_input`)
-- [ ] `tools/search_tool.py` — Google Search API, returns `spoken_summary` + structured sources
-- [ ] `tools/maps_tool.py` — Google Maps API, returns concise `spoken_summary` + rich display data
+- [x] `agents/orchestrator.py`
+      - ADK Agent (Gervis) with full personality system instruction
+      - Tools: google_search (ADK built-in), find_nearby_places (Maps API)
+- [x] `tools/search_tool.py` — ADK built-in google_search re-export
+- [x] `tools/maps_tool.py` — Google Maps Places Text Search, returns spoken_summary + places list
 
 #### Android — Connect to Real Backend Voice WebSocket
-- [ ] Update `BackendVoiceClient` to point to real Cloud Run WebSocket URL
-- [ ] Pass JWT in Authorization header on WebSocket upgrade
-- [ ] Remove any temporary direct Gemini connection from Phase 1
-- [ ] Test full end-to-end: phone mic → backend → Gemini → backend → phone speaker
+- [ ] Verify `BackendVoiceClient` JWT auth — passes token via Authorization header on upgrade
+- [ ] Set `BackendConfig.wsBaseUrl` to real Cloud Run WebSocket URL before end-to-end test
+- [ ] Remove any temporary direct Gemini connection from Phase 1 (if present)
+- [ ] Test full end-to-end: phone mic → backend → ADK/Gemini → backend → phone speaker
+
+#### Setup required before testing
+- [ ] Add `GEMINI_API_KEY` to `gervis-backend/.env` (get from Google AI Studio)
+- [ ] Add `GOOGLE_MAPS_API_KEY` to `gervis-backend/.env` (optional, for maps tool)
 
 ### Acceptance Criteria
 

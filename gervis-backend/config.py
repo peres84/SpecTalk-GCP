@@ -16,5 +16,12 @@ class Settings(BaseSettings):
     environment: str = "development"
     allowed_origins: list[str] = ["http://localhost:3000"]
 
+    # Phase 3: Gemini Live + ADK
+    # Get from https://aistudio.google.com/app/apikey
+    # Used for: Gemini Live voice session, Google Search grounding, Google Maps grounding
+    gemini_api_key: str = ""
+    adk_app_name: str = "spectalk"
+    gemini_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+
 
 settings = Settings()
