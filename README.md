@@ -183,6 +183,29 @@ gervis-backend/                    ← Python backend repository (Phase 2)
 
 ---
 
+## Building the Android App
+
+### Vosk Wake-Word Model
+
+The Vosk speech model is **not stored in this repository** (it's ~20 MB of binary files).
+Gradle downloads and extracts it automatically into `android/app/src/main/assets/model/`
+the first time you build — no manual step needed.
+
+**If the automatic download fails** (network issue, proxy, CI environment), download it manually:
+
+```bash
+# From the repo root
+curl -L https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip -o vosk-model.zip
+unzip vosk-model.zip
+mkdir -p android/app/src/main/assets/model
+cp -r vosk-model-small-en-us-0.15/* android/app/src/main/assets/model/
+rm -rf vosk-model.zip vosk-model-small-en-us-0.15
+```
+
+Then re-run the build normally.
+
+---
+
 ## Delivery Phases
 
 See [`TODO.md`](./TODO.md) for the full task-level breakdown with approval checkpoints.

@@ -86,3 +86,56 @@ dependencies {
     implementation("com.alphacephei:vosk-android:0.3.47@aar") { isTransitive = true }
     implementation("net.java.dev.jna:jna:5.13.0@aar")
 }
+
+// ---------------------------------------------------------------------------
+// Vosk model auto-download
+// The model is not committed to git (it's ~20 MB of binary files).
+// This task downloads and extracts it into assets/model/ automatically
+// before every build. It is a no-op if the model already exists.
+// ---------------------------------------------------------------------------
+val voskModelUrl = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+val voskModelDir = file("src/main/assets/model")
+
+tasks.register("downloadVoskModel") {
+    description = "Downloads and extracts the Vosk small-EN model into assets/model/ if missing."
+    onlyIf { !voskModelDir.exists() }
+    doLast {
+        val zipFile = File(buildDir, "tmp/vosk-model.zip")
+        zipFile.parentFile.mkdirs()
+
+        logger.lifecycle("Downloading Vosk model from $voskModelUrl ...")
+        java.net.URI(voskModelUrl).toURL().openStream().use { input ->
+            zipFile.outputStream().use { output -> input.copyTo(output) }
+        }
+
+        logger.lifecycle("Extracting Vosk model to $voskModelDir ...")
+        val destAssets = file("src/main/assets")
+        java.util.zip.ZipInputStream(zipFile.inputStream()).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                // Strip the top-level folder from the zip (vosk-model-small-en-us-0.15/...)
+                // and map it to assets/model/...
+                val stripped = entry.name.substringAfter("/")
+                if (stripped.isNotEmpty()) {
+                    val outFile = File(destAssets, "model/$stripped")
+                    if (entry.isDirectory) {
+                        outFile.mkdirs()
+                    } else {
+                        outFile.parentFile.mkdirs()
+                        outFile.outputStream().use { out -> zip.copyTo(out) }
+                    }
+                }
+                entry = zip.nextEntry
+            }
+        }
+        zipFile.delete()
+        logger.lifecycle("Vosk model ready at $voskModelDir")
+    }
+}
+
+// Wire the download to run before assets are merged
+tasks.whenTaskAdded {
+    if (name == "mergeDebugAssets" || name == "mergeReleaseAssets") {
+        dependsOn("downloadVoskModel")
+    }
+}
