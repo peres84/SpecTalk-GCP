@@ -3,4 +3,8 @@
     <!-- Google Sign-In: paste your Web Client ID from Firebase Console →
          Authentication → Sign-in method → Google → Web SDK configuration -->
     <string name="google_web_client_id">223350201590-7tva8h28tgcgfu10lpttgsvba04n4u3l.apps.googleusercontent.com</string>
+    <!-- Backend base URL — no trailing slash.
+         Dev (Android emulator → host localhost): http://10.0.2.2:8080
+         Production: paste your Cloud Run URL, e.g. https://gervis-backend-xxxxxxxxxx-uc.a.run.app -->
+    <string name="backend_base_url">http://10.0.2.2:8080</string>
 </resources>

@@ -1,11 +1,12 @@
 package com.spectalk.app.auth
 
+import android.app.Application
 import android.content.Context
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -15,15 +16,17 @@ import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.auth.GoogleAuthProvider
 import com.spectalk.app.R
+import com.spectalk.app.SpecTalkApplication
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
-class AuthViewModel : ViewModel() {
+class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     private val auth = FirebaseAuth.getInstance()
+    private val tokenRepository = (application as SpecTalkApplication).tokenRepository
 
     private val _state = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
     val state: StateFlow<AuthUiState> = _state.asStateFlow()
@@ -34,10 +37,28 @@ class AuthViewModel : ViewModel() {
 
     private fun checkCurrentUser() {
         val user = auth.currentUser
-        _state.value = if (user != null && user.isEmailVerified) {
-            AuthUiState.Authenticated(user.email ?: "")
-        } else {
-            AuthUiState.Unauthenticated
+        if (user == null || !user.isEmailVerified) {
+            _state.value = AuthUiState.Unauthenticated
+            return
+        }
+        // Fast path: stored JWT exists — no network call needed.
+        val storedJwt = tokenRepository.getProductJwt()
+        if (storedJwt.isNotBlank()) {
+            _state.value = AuthUiState.Authenticated(user.email ?: "")
+            return
+        }
+        // Slow path: JWT is missing (e.g. app reinstalled) — exchange silently.
+        viewModelScope.launch {
+            runCatching {
+                val idToken = user.getIdToken(false).await().token
+                    ?: throw Exception("Could not get Firebase ID token")
+                tokenRepository.exchangeFirebaseToken(idToken)
+            }.onSuccess {
+                _state.value = AuthUiState.Authenticated(user.email ?: "")
+            }.onFailure {
+                auth.signOut()
+                _state.value = AuthUiState.Unauthenticated
+            }
         }
     }
 
@@ -46,8 +67,7 @@ class AuthViewModel : ViewModel() {
             _state.value = AuthUiState.Loading
             try {
                 auth.signInWithEmailAndPassword(email, password).await()
-                val user = auth.currentUser
-                if (user == null) {
+                val user = auth.currentUser ?: run {
                     _state.value = AuthUiState.Error("Sign in failed")
                     return@launch
                 }
@@ -56,7 +76,7 @@ class AuthViewModel : ViewModel() {
                     _state.value = AuthUiState.Error("Please verify your email before signing in.")
                     return@launch
                 }
-                _state.value = AuthUiState.Authenticated(user.email ?: "")
+                exchangeAndAuthenticate(user.email ?: "")
             } catch (e: FirebaseAuthInvalidCredentialsException) {
                 _state.value = AuthUiState.Error("Wrong email or password.")
             } catch (e: Exception) {
@@ -93,17 +113,16 @@ class AuthViewModel : ViewModel() {
                         googleIdTokenCredential.idToken, null
                     )
                     auth.signInWithCredential(firebaseCredential).await()
-                    val user = auth.currentUser
-                    if (user != null) {
-                        _state.value = AuthUiState.Authenticated(user.email ?: "")
-                    } else {
+                    val user = auth.currentUser ?: run {
                         _state.value = AuthUiState.Error("Google sign-in failed")
+                        return@launch
                     }
+                    exchangeAndAuthenticate(user.email ?: "")
                 } else {
                     _state.value = AuthUiState.Error("Unexpected credential type")
                 }
             } catch (e: GetCredentialCancellationException) {
-                _state.value = AuthUiState.Unauthenticated // user dismissed
+                _state.value = AuthUiState.Unauthenticated
             } catch (e: Exception) {
                 _state.value = AuthUiState.Error(e.message ?: "Google sign-in failed")
             }
@@ -144,10 +163,24 @@ class AuthViewModel : ViewModel() {
 
     fun signOut() {
         auth.signOut()
+        tokenRepository.clearTokens()
         _state.value = AuthUiState.Unauthenticated
     }
 
     fun resetState() {
         checkCurrentUser()
+    }
+
+    private suspend fun exchangeAndAuthenticate(email: String) {
+        try {
+            val user = auth.currentUser!!
+            val idToken = user.getIdToken(false).await().token
+                ?: throw Exception("Could not get Firebase ID token")
+            tokenRepository.exchangeFirebaseToken(idToken)
+            _state.value = AuthUiState.Authenticated(email)
+        } catch (e: Exception) {
+            auth.signOut()
+            _state.value = AuthUiState.Error("Backend unavailable: ${e.message}")
+        }
     }
 }

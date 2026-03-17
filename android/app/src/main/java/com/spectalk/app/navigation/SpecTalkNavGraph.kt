@@ -13,6 +13,7 @@ import com.spectalk.app.ui.screens.LoginScreen
 import com.spectalk.app.ui.screens.RegisterScreen
 import com.spectalk.app.ui.screens.SettingsScreen
 import com.spectalk.app.ui.screens.SplashScreen
+import com.spectalk.app.ui.screens.VoiceSessionScreen
 
 @Composable
 fun SpecTalkNavGraph() {
@@ -65,6 +66,7 @@ fun SpecTalkNavGraph() {
             HomeScreen(
                 authViewModel = authViewModel,
                 onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                onNavigateToVoiceSession = { navController.navigate(Screen.VoiceSession.route) },
                 onSignOut = {
                     navController.navigate(Screen.Login.route) {
                         popUpTo(Screen.Home.route) { inclusive = true }
@@ -75,6 +77,12 @@ fun SpecTalkNavGraph() {
 
         composable(Screen.Settings.route) {
             SettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.VoiceSession.route) {
+            VoiceSessionScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

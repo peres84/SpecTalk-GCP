@@ -19,8 +19,12 @@ def get_firebase_app() -> firebase_admin.App:
         cred = credentials.Certificate(settings.firebase_service_account_json)
         _firebase_app = firebase_admin.initialize_app(cred)
     else:
-        # Use Application Default Credentials (for Cloud Run / local gcloud auth)
-        _firebase_app = firebase_admin.initialize_app()
+        # Use Application Default Credentials (gcloud auth application-default login locally,
+        # or the Cloud Run service account in production). Pass the project ID explicitly so
+        # verify_id_token knows which Firebase project to validate tokens against.
+        _firebase_app = firebase_admin.initialize_app(
+            options={"projectId": settings.firebase_project_id}
+        )
 
     return _firebase_app
 

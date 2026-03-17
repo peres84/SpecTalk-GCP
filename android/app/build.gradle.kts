@@ -42,6 +42,8 @@ android {
 
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+        // Required for libvosk.so — avoids Play Store 16 KB page-size alignment check
+        jniLibs { useLegacyPackaging = true }
     }
 }
 
@@ -67,4 +69,14 @@ dependencies {
     implementation(libs.credentials)
     implementation(libs.credentials.play.services)
     implementation(libs.googleid)
+
+    // Firebase Cloud Messaging (notification channel setup)
+    implementation(libs.firebase.messaging)
+
+    // WebSocket (BackendVoiceClient)
+    implementation(libs.okhttp)
+
+    // Vosk wake-word detection
+    implementation("com.alphacephei:vosk-android:0.3.47@aar") { isTransitive = true }
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
 }

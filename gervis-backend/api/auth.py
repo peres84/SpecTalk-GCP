@@ -50,6 +50,18 @@ async def create_session(
         db.add(user)
         await db.commit()
         await db.refresh(user)
+    else:
+        # Update mutable fields if they changed
+        changed = False
+        if user.email != email:
+            user.email = email
+            changed = True
+        if display_name and user.display_name != display_name:
+            user.display_name = display_name
+            changed = True
+        if changed:
+            await db.commit()
+            await db.refresh(user)
 
     token = sign_product_jwt(str(user.id), user.email)
 

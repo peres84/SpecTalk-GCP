@@ -134,6 +134,7 @@ temp/
 
 # Secrets / credentials — never commit
 /gervis-backend/.env
+/gervis-backend/secrets/
 /gervis-backend/serviceAccountKey.json
 /gervis-backend/*-service-account*.json
 /gervis-backend/*.json.secret

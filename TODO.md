@@ -180,24 +180,24 @@ infrastructure in place. No Gemini yet — just the foundation.
 - [x] `main.py` — FastAPI app, lifespan (DB pool init), router registration, CORS
 - [x] `config.py` — Pydantic settings, reads from `.env`
 - [x] `db/database.py` — SQLAlchemy async engine, session factory
-- [x] `db/models.py` — `User` ORM model (firebase_uid, email, display_name, timestamps)
-- [x] `db/migrations/` — Alembic setup, initial migration with full schema
+- [x] `db/models.py` — all ORM models (User, Conversation, Turn, Job, PendingAction, ResumeEvent, Asset)
+- [x] `db/migrations/` — Alembic setup, full schema migration (users + all tables)
 - [x] `auth/firebase.py` — Firebase Admin SDK init, `verify_firebase_token(id_token)`
 - [x] `auth/jwt_handler.py` — `sign_product_jwt`, `verify_product_jwt` (python-jose)
 - [x] `api/auth.py` — `POST /auth/session`: verify Firebase token, upsert user, return JWT
-- [ ] `api/voice.py` — `POST /voice/session/start` stub
-- [ ] `api/conversations.py` — conversation CRUD endpoints
-- [ ] `api/jobs.py` — `GET /jobs/{job_id}`
-- [ ] `api/notifications.py` — `POST /notifications/device/register`
+- [x] `api/voice.py` — `POST /voice/session/start` stub
+- [x] `api/conversations.py` — conversation CRUD endpoints
+- [x] `api/jobs.py` — `GET /jobs/{job_id}`
+- [x] `api/notifications.py` — `POST /notifications/device/register`
 - [x] `middleware/auth.py` — `require_auth` dependency, validates Bearer JWT on protected routes
 - [x] `Dockerfile` — production-ready image (uv-based, python 3.12-slim)
-- [ ] Cloud Build `cloudbuild.yaml` — build → push → migrate → deploy pipeline
+- [x] Cloud Build `cloudbuild.yaml` — build → push → migrate → deploy pipeline
 - [x] `pyproject.toml` — dependencies managed with `uv`
 
 #### Android: Wire Auth to Real Backend
-- [ ] Update `POST /auth/session` call in Android app to hit real Cloud Run URL
-- [ ] Store product JWT securely (EncryptedSharedPreferences)
-- [ ] Use product JWT on all API calls
+- [x] Update `POST /auth/session` call in Android app to hit real Cloud Run URL
+- [x] Store product JWT securely (EncryptedSharedPreferences)
+- [x] Use product JWT on all API calls
 
 ### Acceptance Criteria
 

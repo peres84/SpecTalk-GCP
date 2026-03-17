@@ -20,6 +20,7 @@ import com.spectalk.app.auth.AuthViewModel
 fun HomeScreen(
     authViewModel: AuthViewModel,
     onNavigateToSettings: () -> Unit,
+    onNavigateToVoiceSession: () -> Unit,
     onSignOut: () -> Unit,
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
@@ -43,7 +44,7 @@ fun HomeScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { /* TODO Phase 1: start voice session */ }) {
+            FloatingActionButton(onClick = onNavigateToVoiceSession) {
                 Icon(Icons.Filled.Add, contentDescription = "New conversation")
             }
         },
