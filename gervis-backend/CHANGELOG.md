@@ -8,6 +8,19 @@ Entries are ordered newest-first within each phase.
 ## Phase 3 — Voice Agent + Gemini Live
 > Status: 🔄 In Progress
 
+### [Phase 3.6] — run_live deprecated API fix
+**Files:** `services/gemini_live_client.py`, `ws/voice_handler.py`
+
+ADK 1.1.1 deprecated the `session=` parameter on `runner.run_live()`. The old call
+`runner.run_live(session=session, ...)` triggered a `DeprecationWarning` on every voice
+connection and will break in a future ADK version.
+
+`start_live_session()` in `GeminiLiveClient` now takes `user_id` and `session_id` directly
+and passes them to `runner.run_live(user_id=..., session_id=..., ...)`. The `voice_handler.py`
+call site was updated to match — it no longer receives the session object, only the IDs.
+
+---
+
 ### [Phase 3.5] — Gemini API key test script
 **New file:** `scripts/test_gemini_key.py`
 
