@@ -154,7 +154,7 @@ Reference for all UI and audio components: `samples/gemini-voice-agent/`
 ---
 
 ## Phase 2 — Backend: Foundation
-**Status: `🔄 IN PROGRESS`**
+**Status: `✅ APPROVED`**
 
 Goal: A deployable Python backend on Google Cloud with authentication, database, and all
 infrastructure in place. No Gemini yet — just the foundation.
@@ -162,18 +162,16 @@ infrastructure in place. No Gemini yet — just the foundation.
 ### Tasks
 
 #### Infrastructure Setup
-- [ ] Create Google Cloud project
+- [ ] Create Google Cloud project — deferred, deploy before Phase 3 go-live
 - [ ] Enable APIs: Cloud Run, Cloud SQL Admin, Secret Manager, Cloud Build, Artifact Registry,
-      Firebase, Cloud Tasks, Cloud Storage
-- [ ] Create Cloud SQL PostgreSQL instance (same region as planned users)
-- [ ] Create Cloud Storage artifacts bucket
-- [ ] Create Cloud Tasks queue (`backend-jobs`)
+      Firebase, Cloud Tasks, Cloud Storage — deferred
+- [ ] Create Cloud SQL PostgreSQL instance — deferred (using Neon PostgreSQL for dev ✅)
+- [ ] Create Cloud Storage artifacts bucket — deferred
+- [ ] Create Cloud Tasks queue (`backend-jobs`) — deferred
 - [x] Configure Firebase project: enable Email/Password + Google sign-in, add Android app
-- [ ] Add all secrets to Secret Manager:
-      `GEMINI_API_KEY`, `JWT_SECRET`, `DATABASE_URL`, `GOOGLE_MAPS_API_KEY`,
-      `GOOGLE_SEARCH_API_KEY`, `OPENCLAW_API_KEY`
-- [ ] Create Cloud Run service account with correct IAM roles (see `architecture.md`)
-- [ ] Create Artifact Registry repository for Docker images
+- [ ] Add all secrets to Secret Manager — deferred
+- [ ] Create Cloud Run service account with correct IAM roles (see `architecture.md`) — deferred
+- [ ] Create Artifact Registry repository for Docker images — deferred
 - [x] Create `gervis-backend/` directory in repo
 
 #### Backend Code
@@ -201,14 +199,14 @@ infrastructure in place. No Gemini yet — just the foundation.
 
 ### Acceptance Criteria
 
-- User can register in the app, Firebase creates the account, `POST /auth/session` creates a
-  user row in Cloud SQL, and the app receives a product JWT
-- All REST endpoints return correct responses
-- Cloud Run deployed and accessible from Android app
-- Database migrations run cleanly on deploy
-- No credentials in source code or Docker images
+- [x] User can register in the app, Firebase creates the account, `POST /auth/session` creates a
+      user row in Neon PostgreSQL, and the app receives a product JWT
+- [x] All REST endpoints return correct responses (tested via `scripts/test_auth_session.py`)
+- [ ] Cloud Run deployed and accessible from Android app — deferred to pre-Phase 3
+- [x] Database migrations run cleanly (`alembic upgrade head` — full schema on Neon)
+- [x] No credentials in source code or Docker images
 
-### ⏸ Awaiting approval to proceed to Phase 3
+### ✅ Approved — proceeding to Phase 3
 
 ---
 
@@ -372,7 +370,7 @@ Goal: 3D model workflow, long-term memory, artifact browser in app, richer multi
 
 - [x] Phase 0 approved
 - [ ] Phase 1 approved
-- [ ] Phase 2 approved
+- [x] Phase 2 approved
 - [ ] Phase 3 approved
 - [ ] Phase 4 approved
 - [ ] Phase 5 approved
