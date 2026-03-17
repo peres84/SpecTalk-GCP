@@ -1,3 +1,6 @@
+import java.net.URI
+import java.util.zip.ZipInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.jetbrains.kotlin.android)
@@ -104,13 +107,13 @@ tasks.register("downloadVoskModel") {
         zipFile.parentFile.mkdirs()
 
         logger.lifecycle("Downloading Vosk model from $voskModelUrl ...")
-        java.net.URI(voskModelUrl).toURL().openStream().use { input ->
+        URI(voskModelUrl).toURL().openStream().use { input ->
             zipFile.outputStream().use { output -> input.copyTo(output) }
         }
 
         logger.lifecycle("Extracting Vosk model to $voskModelDir ...")
         val destAssets = file("src/main/assets")
-        java.util.zip.ZipInputStream(zipFile.inputStream()).use { zip ->
+        ZipInputStream(zipFile.inputStream()).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
                 // Strip the top-level folder from the zip (vosk-model-small-en-us-0.15/...)
