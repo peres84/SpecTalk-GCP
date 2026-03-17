@@ -8,6 +8,22 @@ Entries are ordered newest-first within each phase.
 ## Phase 3 — Voice Agent + Gemini Live
 > Status: 🔄 In Progress
 
+### [Phase 3.7] — find_nearby_places Optional[float] ADK parse fix
+**File:** `tools/maps_tool.py`
+
+ADK's automatic function calling (`_automatic_function_calling_util.py`) cannot parse
+`float | None = None` (Union/Optional) parameters. On startup, ADK inspects the function
+signature to build the Gemini function declaration. The `latitude` and `longitude` params
+triggered a `ValueError`, crashing the agent initialization and closing the WebSocket before
+the session started.
+
+Fix: changed both parameters from `float | None = None` to `float = 0.0`. The `0.0` value
+acts as a sentinel — the tool skips `ToolConfig.retrieval_config` when either coordinate is
+`0.0`. This satisfies ADK's requirement for simple type annotations while preserving the
+optional GPS-precision behaviour.
+
+---
+
 ### [Phase 3.6] — run_live deprecated API fix
 **Files:** `services/gemini_live_client.py`, `ws/voice_handler.py`
 

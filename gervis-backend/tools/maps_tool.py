@@ -16,16 +16,16 @@ logger = logging.getLogger(__name__)
 async def find_nearby_places(
     query: str,
     location: str,
-    latitude: float | None = None,
-    longitude: float | None = None,
+    latitude: float = 0.0,
+    longitude: float = 0.0,
 ) -> dict:
     """Find places and location information using Google Maps grounding.
 
     Args:
         query: What to look for (e.g., "best Italian restaurants", "nearest pharmacy")
         location: Where to search (e.g., "downtown Seattle", "Times Square NYC")
-        latitude: Optional latitude for precise user location context
-        longitude: Optional longitude for precise user location context
+        latitude: Latitude for precise user location context (0.0 = not provided)
+        longitude: Longitude for precise user location context (0.0 = not provided)
 
     Returns:
         A dict with spoken_summary (natural language, voice-ready) and sources list.
@@ -47,7 +47,7 @@ async def find_nearby_places(
         )
 
         tool_config = None
-        if latitude is not None and longitude is not None:
+        if latitude != 0.0 and longitude != 0.0:
             tool_config = types.ToolConfig(
                 retrieval_config=types.RetrievalConfig(
                     lat_lng=types.LatLng(latitude=latitude, longitude=longitude)
