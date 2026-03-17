@@ -1,8 +1,6 @@
 package com.spectalk.app.ui.screens
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -16,31 +14,36 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Mic
-import androidx.compose.material.icons.rounded.MicOff
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,8 +52,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -60,9 +61,11 @@ import com.spectalk.app.voice.ConversationTurn
 import com.spectalk.app.voice.VoiceAgentViewModel
 import com.spectalk.app.voice.VoiceSessionUiState
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoiceSessionScreen(
     conversationId: String?,
+    isActive: Boolean = true,
     onNavigateBack: () -> Unit,
     viewModel: VoiceAgentViewModel = viewModel(),
 ) {
@@ -71,7 +74,7 @@ fun VoiceSessionScreen(
 
     // Auto-start session when screen opens (either new or resuming existing conversation)
     LaunchedEffect(conversationId) {
-        viewModel.startSession(conversationId)
+        viewModel.startSession(conversationId, isActive)
     }
 
     LaunchedEffect(uiState.recentError) {
@@ -83,6 +86,30 @@ fun VoiceSessionScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = {
+                        viewModel.disconnect()
+                        onNavigateBack()
+                    }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                        )
+                    }
+                },
+                title = { Text("Gervis", fontWeight = FontWeight.SemiBold) },
+                actions = {
+                    ActivationChip(
+                        isActive = uiState.isConversationActive,
+                        enabled = uiState.conversationId != null,
+                        onToggle = { viewModel.toggleActivation() },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                },
+            )
+        },
         snackbarHost = {
             SnackbarHost(
                 hostState = snackbarHostState,
@@ -99,37 +126,31 @@ fun VoiceSessionScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.background,
-                            MaterialTheme.colorScheme.surface,
-                        )
-                    )
-                )
-                .padding(padding)
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween,
+                .padding(padding),
         ) {
-            Spacer(Modifier.height(32.dp))
+            // Compact status row: small orb + status label + optional job description
+            CompactStatusRow(
+                uiState = uiState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+            )
 
-            // Connection status pill
-            ConnectionStatusPill(uiState = uiState)
+            HorizontalDivider(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+            )
 
-            Spacer(Modifier.height(24.dp))
+            // Transcript area — scrollable, fills remaining space
+            TranscriptArea(
+                uiState = uiState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            )
 
-            // Animated orb — center piece
-            GervisOrb(uiState = uiState)
-
-            Spacer(Modifier.height(24.dp))
-
-            // Transcript bubbles
-            TranscriptArea(uiState = uiState, modifier = Modifier.weight(1f))
-
-            Spacer(Modifier.height(16.dp))
-
-            // Disconnect button
+            // End Session button
             Button(
                 onClick = {
                     viewModel.disconnect()
@@ -137,8 +158,10 @@ fun VoiceSessionScreen(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .navigationBarsPadding()
                     .height(52.dp),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
                     contentColor = MaterialTheme.colorScheme.error,
@@ -146,170 +169,103 @@ fun VoiceSessionScreen(
             ) {
                 Text("End Session", fontWeight = FontWeight.SemiBold)
             }
-
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
 
+/**
+ * Chip showing whether this conversation is the active wake-word target.
+ * Tapping it calls [onToggle] to flip the state via the ViewModel.
+ * When [enabled] is false (no conversation resolved yet) the chip is greyed out.
+ */
 @Composable
-private fun ConnectionStatusPill(uiState: VoiceSessionUiState) {
-    val (color, label) = when {
-        uiState.isMicStreaming  -> MaterialTheme.colorScheme.secondary to "Listening"
-        uiState.isConnecting   -> MaterialTheme.colorScheme.tertiary  to "Connecting…"
-        uiState.isConnected    -> MaterialTheme.colorScheme.primary   to "Connected"
-        else                   -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f) to "Offline"
+private fun ActivationChip(isActive: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+    val color = if (isActive) MaterialTheme.colorScheme.secondary
+    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+    FilterChip(
+        selected = isActive,
+        onClick = { if (enabled) onToggle() },
+        label = {
+            Text(
+                text = if (isActive) "Active" else "Inactive",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+        },
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = color.copy(alpha = 0.15f),
+            selectedLabelColor = color,
+            containerColor = MaterialTheme.colorScheme.surface,
+            labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+        ),
+        border = FilterChipDefaults.filterChipBorder(
+            enabled = enabled,
+            selected = isActive,
+            borderColor = color.copy(alpha = 0.30f),
+            selectedBorderColor = color.copy(alpha = 0.50f),
+        ),
+    )
+}
+
+@Composable
+private fun CompactStatusRow(uiState: VoiceSessionUiState, modifier: Modifier = Modifier) {
+    val orbColor = when {
+        uiState.isMicStreaming -> MaterialTheme.colorScheme.secondary
+        uiState.isConnecting  -> MaterialTheme.colorScheme.tertiary
+        uiState.isConnected   -> MaterialTheme.colorScheme.primary
+        else                  -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+    }
+
+    val isActive = uiState.isConnected || uiState.isConnecting || uiState.isMicStreaming
+
+    val transition = rememberInfiniteTransition(label = "compactOrb")
+    val pulseScale by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = if (isActive) 1.18f else 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "orbScale",
+    )
+
+    val statusLabel = when {
+        uiState.isMicStreaming -> "Listening…"
+        uiState.isConnecting  -> "Connecting…"
+        uiState.isConnected   -> "Connected"
+        else                  -> "Offline"
     }
 
     Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(color.copy(alpha = 0.12f))
-            .border(1.dp, color.copy(alpha = 0.30f), RoundedCornerShape(50))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        PulsingDot(color = color, active = uiState.isConnected || uiState.isConnecting)
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = color,
-            fontWeight = FontWeight.SemiBold,
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .scale(pulseScale)
+                .clip(CircleShape)
+                .background(orbColor.copy(alpha = 0.20f))
+                .border(1.5.dp, orbColor.copy(alpha = 0.45f), CircleShape),
         )
-    }
-}
 
-@Composable
-private fun PulsingDot(color: Color, active: Boolean) {
-    val transition = rememberInfiniteTransition(label = "dot")
-    val alpha by transition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (active) 0.3f else 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(700, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "dotAlpha",
-    )
-    Box(
-        modifier = Modifier
-            .size(8.dp)
-            .clip(CircleShape)
-            .background(color.copy(alpha = alpha)),
-    )
-}
-
-@Composable
-private fun GervisOrb(uiState: VoiceSessionUiState) {
-    val orbColor by animateColorAsState(
-        targetValue = when {
-            uiState.isMicStreaming -> MaterialTheme.colorScheme.secondary
-            uiState.isConnecting  -> MaterialTheme.colorScheme.tertiary
-            uiState.isConnected   -> MaterialTheme.colorScheme.primary
-            else                  -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
-        },
-        animationSpec = tween(600),
-        label = "orbColor",
-    )
-
-    val transition = rememberInfiniteTransition(label = "orb")
-
-    val pulseScale by transition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (uiState.isMicStreaming) 1.28f else if (uiState.isConnected) 1.10f else 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(
-                durationMillis = if (uiState.isMicStreaming) 750 else 1800,
-                easing = FastOutSlowInEasing,
-            ),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "scale",
-    )
-    val ringAlpha by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(if (uiState.isMicStreaming) 750 else 1800),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "ringAlpha",
-    )
-
-    val statusText = when {
-        uiState.isMicStreaming -> "Listening…"
-        uiState.isConnecting  -> "Connecting…"
-        uiState.isConnected   -> "Ready"
-        else                  -> "Say \"Hey Gervis\" to start"
-    }
-
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            // Outer glow rings
-            if (uiState.isConnected || uiState.isConnecting) {
-                Box(
-                    modifier = Modifier
-                        .size(164.dp)
-                        .scale(pulseScale)
-                        .clip(CircleShape)
-                        .background(orbColor.copy(alpha = ringAlpha * 0.25f)),
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = statusLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = orbColor,
+                fontWeight = FontWeight.SemiBold,
+            )
+            val jobDescription = uiState.activeJobDescription
+            if (jobDescription.isNotBlank()) {
+                Text(
+                    text = jobDescription,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
-                Box(
-                    modifier = Modifier
-                        .size(132.dp)
-                        .scale(pulseScale * 0.88f)
-                        .clip(CircleShape)
-                        .background(orbColor.copy(alpha = ringAlpha * 0.18f)),
-                )
-            }
-
-            // Core orb
-            Box(
-                modifier = Modifier
-                    .size(104.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.radialGradient(
-                            listOf(orbColor.copy(alpha = 0.45f), orbColor.copy(alpha = 0.10f)),
-                        )
-                    )
-                    .border(
-                        width = 1.5.dp,
-                        brush = Brush.linearGradient(
-                            listOf(orbColor.copy(alpha = 0.80f), orbColor.copy(alpha = 0.15f)),
-                        ),
-                        shape = CircleShape,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                when {
-                    uiState.isConnecting -> CircularProgressIndicator(
-                        modifier = Modifier.size(36.dp),
-                        strokeWidth = 2.5.dp,
-                        color = orbColor,
-                        trackColor = orbColor.copy(alpha = 0.15f),
-                    )
-                    else -> Icon(
-                        imageVector = if (uiState.isMicStreaming) Icons.Rounded.Mic else Icons.Rounded.MicOff,
-                        contentDescription = null,
-                        modifier = Modifier.size(42.dp),
-                        tint = if (uiState.isConnected) Color.White else orbColor,
-                    )
-                }
             }
         }
-
-        Text(
-            text = statusText,
-            style = MaterialTheme.typography.bodyMedium,
-            color = orbColor,
-            fontWeight = FontWeight.Medium,
-            textAlign = TextAlign.Center,
-        )
     }
 }
 
@@ -324,12 +280,26 @@ private fun TranscriptArea(uiState: VoiceSessionUiState, modifier: Modifier = Mo
         }
     }
 
-    if (uiState.turns.isEmpty()) return
+    if (uiState.turns.isEmpty()) {
+        Box(
+            modifier = modifier,
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "Say \"Hey Gervis\" or tap the mic to start",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 32.dp),
+            )
+        }
+        return
+    }
 
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(top = 8.dp),
+        modifier = modifier,
+        contentPadding = PaddingValues(top = 12.dp, bottom = 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
@@ -353,36 +323,43 @@ private fun TurnBubble(turn: ConversationTurn) {
     ) {
         if (isUser) {
             Text(
-                text = turn.text,
+                text = turn.text.stripMarkdown(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier
                     .widthIn(max = 290.dp)
                     .clip(RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.20f))
                     .border(
                         1.dp,
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.30f),
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
                         RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
                     )
                     .padding(12.dp, 10.dp),
             )
         } else {
             Text(
-                text = turn.text,
+                text = turn.text.stripMarkdown(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier
                     .widthIn(max = 290.dp)
-                    .clip(RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp))
+                    .clip(RoundedCornerShape(4.dp, 18.dp, 18.dp, 18.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .border(
                         1.dp,
-                        MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f),
-                        RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp),
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        RoundedCornerShape(4.dp, 18.dp, 18.dp, 18.dp),
                     )
                     .padding(12.dp, 10.dp),
             )
         }
     }
 }
+
+private fun String.stripMarkdown(): String = this
+    .replace(Regex("""\*\*(.+?)\*\*""")) { it.groupValues[1] }
+    .replace(Regex("""\*(.+?)\*""")) { it.groupValues[1] }
+    .replace(Regex("""#{1,6} """), "")
+    .replace(Regex("""`(.+?)`""")) { it.groupValues[1] }
+    .trim()

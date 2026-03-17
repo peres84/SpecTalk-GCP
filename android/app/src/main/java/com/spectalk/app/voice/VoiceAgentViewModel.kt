@@ -74,7 +74,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
 
     // ── Session lifecycle ────────────────────────────────────────────────────
 
-    fun startSession(conversationId: String? = null) {
+    fun startSession(conversationId: String? = null, isActive: Boolean = true) {
         if (_uiState.value.isConnecting || _uiState.value.isConnected) return
 
         // Pause hotword before taking the mic
@@ -125,6 +125,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                     isConnected = false,
                     isMicStreaming = false,
                     statusMessage = "Connecting to Gervis…",
+                    conversationId = resolvedConversationId,
+                    isConversationActive = isActive,
                 )
             }
 
@@ -343,9 +345,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private suspend fun playActivationSound() {
-        if (activationSoundId == 0) return
-        soundPool?.play(activationSoundId, 1f, 1f, 0, 0, 1f)
-        // Give the chime ~300ms to play before opening the WebSocket
+        // The wake beep is now played immediately in HotwordService when the wake word fires.
+        // Keep a short delay here so the WebSocket opens after the tone has finished.
         delay(300)
     }
 
@@ -417,6 +418,29 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             turns.dropLast(1) + ConversationTurn(role, text)
         } else {
             turns + ConversationTurn(role, text)
+        }
+    }
+
+    /**
+     * Toggle whether this conversation is the "active" one (the wake-word target).
+     * Optimistically updates the UI; calls the backend PATCH in the background.
+     * When activating, the backend is expected to deactivate all other conversations.
+     */
+    fun toggleActivation() {
+        val convId = _uiState.value.conversationId ?: return
+        val jwt = getProductJwt()
+        if (jwt.isBlank()) return
+        val nowActive = !_uiState.value.isConversationActive
+        _uiState.update { it.copy(isConversationActive = nowActive) }
+        viewModelScope.launch {
+            runCatching {
+                conversationRepository.updateConversationState(
+                    jwt, convId, if (nowActive) "active" else "idle"
+                )
+            }.onFailure {
+                // Revert on failure
+                _uiState.update { it.copy(isConversationActive = !nowActive) }
+            }
         }
     }
 

@@ -73,7 +73,7 @@ import java.time.temporal.ChronoUnit
 fun HomeScreen(
     authViewModel: AuthViewModel,
     onNavigateToSettings: () -> Unit,
-    onNavigateToVoiceSession: (conversationId: String?) -> Unit,
+    onNavigateToVoiceSession: (conversationId: String?, isActive: Boolean) -> Unit,
     onSignOut: () -> Unit,
     homeViewModel: HomeViewModel = viewModel(),
 ) {
@@ -98,6 +98,11 @@ fun HomeScreen(
         val needed = buildList {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
+            // BLUETOOTH_CONNECT is required on API 31+ (minSdk=31) to read the BT headset
+            // connection state in HotwordService. Without it, isBtHeadsetConnected is always
+            // false and Vosk never starts even when earbuds are connected.
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT)
+                != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.BLUETOOTH_CONNECT)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
@@ -109,14 +114,18 @@ fun HomeScreen(
         }
     }
 
-    // Wake word detected → navigate to voice session automatically
+    // Wake word detected → resume the existing active conversation, or start a new one
     LaunchedEffect(Unit) {
+        fun findActiveConversationId(): String? =
+            homeViewModel.uiState.value.conversations
+                .firstOrNull { it.state == "active" || it.state == "awaiting_resume" }?.id
+
         if (HotwordEventBus.consumePendingWakeWord()) {
-            onNavigateToVoiceSession(null)
+            onNavigateToVoiceSession(findActiveConversationId(), true)
             return@LaunchedEffect
         }
         HotwordEventBus.wakeWordDetected.collect {
-            onNavigateToVoiceSession(null)
+            onNavigateToVoiceSession(findActiveConversationId(), true)
         }
     }
 
@@ -138,7 +147,10 @@ fun HomeScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { onNavigateToVoiceSession(null) }) {
+            FloatingActionButton(onClick = {
+                homeViewModel.deactivateCurrentActive()
+                onNavigateToVoiceSession(null, true)
+            }) {
                 Icon(Icons.Filled.Add, contentDescription = "New conversation")
             }
         },
@@ -187,7 +199,12 @@ fun HomeScreen(
                         ) {
                             ConversationRow(
                                 item = conversation,
-                                onClick = { onNavigateToVoiceSession(conversation.id) },
+                                onClick = {
+                                    onNavigateToVoiceSession(
+                                        conversation.id,
+                                        conversation.state == "active",
+                                    )
+                                },
                             )
                         }
                         HorizontalDivider(
@@ -256,6 +273,7 @@ private fun ConversationRow(item: ConversationItem, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,

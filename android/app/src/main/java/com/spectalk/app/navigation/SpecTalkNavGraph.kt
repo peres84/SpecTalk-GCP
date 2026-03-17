@@ -68,8 +68,8 @@ fun SpecTalkNavGraph() {
             HomeScreen(
                 authViewModel = authViewModel,
                 onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                onNavigateToVoiceSession = { conversationId ->
-                    navController.navigate(Screen.VoiceSession.routeWith(conversationId))
+                onNavigateToVoiceSession = { conversationId, isActive ->
+                    navController.navigate(Screen.VoiceSession.routeWith(conversationId, isActive))
                 },
                 onSignOut = {
                     navController.navigate(Screen.Login.route) {
@@ -92,12 +92,18 @@ fun SpecTalkNavGraph() {
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
-                }
+                },
+                navArgument("isActive") {
+                    type = NavType.BoolType
+                    defaultValue = true
+                },
             ),
         ) { backStackEntry ->
             val conversationId = backStackEntry.arguments?.getString("conversationId")
+            val isActive = backStackEntry.arguments?.getBoolean("isActive") ?: true
             VoiceSessionScreen(
                 conversationId = conversationId,
+                isActive = isActive,
                 onNavigateBack = { navController.popBackStack() },
             )
         }

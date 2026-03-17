@@ -4,9 +4,12 @@ import com.spectalk.app.config.BackendConfig
 import com.spectalk.app.voice.ConversationTurn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -63,6 +66,24 @@ class ConversationRepository(private val http: OkHttpClient = defaultClient) {
             val request = Request.Builder()
                 .url("${BackendConfig.baseUrl}/conversations/$conversationId")
                 .delete()
+                .header("Authorization", "Bearer $jwt")
+                .build()
+            runCatching { http.newCall(request).execute().code in 200..299 }.getOrDefault(false)
+        }
+
+    /**
+     * Update the state of a conversation (e.g. "active" or "idle").
+     * Returns true on success (2xx), false otherwise.
+     * When setting "active", the backend is expected to deactivate all other conversations
+     * for that user so only one active conversation exists at a time.
+     */
+    suspend fun updateConversationState(jwt: String, conversationId: String, state: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("state", state).toString()
+                .toRequestBody("application/json".toMediaType())
+            val request = Request.Builder()
+                .url("${BackendConfig.baseUrl}/conversations/$conversationId")
+                .patch(body)
                 .header("Authorization", "Bearer $jwt")
                 .build()
             runCatching { http.newCall(request).execute().code in 200..299 }.getOrDefault(false)

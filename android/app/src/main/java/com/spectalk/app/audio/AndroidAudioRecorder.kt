@@ -52,9 +52,12 @@ class AndroidAudioRecorder {
             return false
         }
 
-        recorder.startRecording()
+        // Attach AEC/NS/AGC before starting recording so the filters are active
+        // from the very first captured frame. AEC is critical — without it the
+        // mic picks up Gervis's speaker output and streams it back as user speech.
         audioRecord = recorder
         attachAudioEffects(recorder.audioSessionId)
+        recorder.startRecording()
 
         recordingJob = scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(max(minBufferSize, CHUNK_SIZE_BYTES))

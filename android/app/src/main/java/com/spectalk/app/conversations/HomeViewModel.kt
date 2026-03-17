@@ -66,6 +66,28 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Deactivates the currently active conversation (sets its state to "idle").
+     * Called when the user taps the FAB to start a new conversation so only one
+     * conversation is ever active at a time.
+     */
+    fun deactivateCurrentActive() {
+        val jwt = tokenRepository.getProductJwt()
+        if (jwt.isBlank()) return
+        val activeId = _uiState.value.conversations
+            .firstOrNull { it.state == "active" }?.id ?: return
+        // Optimistic update
+        _uiState.update {
+            it.copy(conversations = it.conversations.map { c ->
+                if (c.id == activeId) c.copy(state = "idle") else c
+            })
+        }
+        viewModelScope.launch {
+            runCatching { conversationRepository.updateConversationState(jwt, activeId, "idle") }
+                .onFailure { loadConversations() } // restore on failure
+        }
+    }
+
     fun clearError() {
         _uiState.update { it.copy(error = null) }
     }

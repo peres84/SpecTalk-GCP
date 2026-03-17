@@ -7,6 +7,82 @@ Newest entries at the top.
 
 ## [Unreleased] — Phase 1 + Phase 3 integration
 
+### Fixed
+
+#### Delete background icon always visible in conversation rows
+- **Symptom:** A faint red trash icon was permanently visible on the right side of every
+  conversation row even without swiping.
+- **Root cause:** `ConversationRow` had no opaque background, so the `SwipeToDismissBox`
+  `backgroundContent` (red with `alpha=0.15f`) bled through the transparent row surface at rest.
+- **Fix:** Added `Modifier.background(MaterialTheme.colorScheme.surface)` to the root `Row`
+  in `ConversationRow` so the foreground correctly covers the background at rest.
+- **File:** `ui/screens/HomeScreen.kt`
+
+#### Multiple simultaneous WebSocket connections on wake word
+- **Symptom:** 4–5 WebSocket connections opened simultaneously whenever "Hey Gervis" was
+  detected, each immediately receiving a backend error and closing with `EOFException`.
+- **Root cause:** `HotwordService` fires `notifyWakeWord()` on both `onPartialResult` and
+  `onResult`. A single utterance produces several rapid partial results, each calling
+  `notifyWakeWord()` and emitting a new wake event before `isPaused` was checked.
+- **Fix:** Added an early-return guard in `HotwordEventBus.notifyWakeWord()`: if `isPaused`
+  is already `true` (i.e., a session is already being handled), the call is a no-op.
+  A single utterance now produces exactly one wake event.
+- **File:** `hotword/HotwordEventBus.kt`
+
+#### Wake word never detected after adding BT gate (`BLUETOOTH_CONNECT` not requested)
+- **Symptom:** After re-adding the Bluetooth gate to Vosk, "Hey Gervis" stopped working
+  entirely — even with earbuds connected.
+- **Root cause:** `HotwordService.onCreate()` calls `getProfileConnectionState()` to check
+  if a BT headset is connected. This requires the `BLUETOOTH_CONNECT` runtime permission on
+  API 31+ (minSdk). The permission was declared in the manifest but never requested via
+  `ActivityResultContracts.RequestMultiplePermissions`. The `runCatching` guard silently
+  returned `false`, so `isBtHeadsetConnected` was always `false` and Vosk never started.
+- **Fix:** Added `BLUETOOTH_CONNECT` to the permission request in `HomeScreen.LaunchedEffect`.
+  It is always requested (minSdk = API 31, so the permission is always required). If the user
+  denies it, `HotwordService` degrades gracefully — it won't know BT state, so Vosk stays idle.
+  Granting it allows accurate BT headset detection.
+- **File:** `ui/screens/HomeScreen.kt`
+
+#### Wake beep now plays immediately on wake word detection
+- **Symptom:** No audible feedback when "Hey Gervis" was detected — the user couldn't tell
+  the assistant was listening until the voice session screen opened.
+- **Root cause:** `playActivationSound()` was called inside `VoiceAgentViewModel.startSession()`,
+  which runs only after navigation to `VoiceSessionScreen`. This added a noticeable delay.
+- **Fix:** Added `playWakeBeep()` to `HotwordService`. It plays a 180ms `TONE_PROP_BEEP`
+  via `ToneGenerator(STREAM_MUSIC)` — using `STREAM_MUSIC` ensures the tone routes to the
+  active audio output (BT headset if connected, phone speaker otherwise). It fires immediately
+  in `onResult()` / `onPartialResult()` before `notifyWakeWord()` is called.
+  `VoiceAgentViewModel.playActivationSound()` now only holds the 300ms pre-connect delay
+  (the beep itself moved to the service).
+- **File:** `hotword/HotwordService.kt`, `voice/VoiceAgentViewModel.kt`
+
+#### Single-active-conversation model
+- **Behaviour:** Only one conversation can be "active" (wake-word target) at a time.
+- **FAB (+ button):** Deactivates the currently active conversation via
+  `PATCH /conversations/{id}` (`{"state":"idle"}`) before opening a new session.
+  The new conversation starts as `active`.
+- **Wake word:** Resumes the first `active`/`awaiting_resume` conversation instead of
+  always creating a new one. If none exists, a new conversation is created.
+- **Conversation toggle:** `VoiceSessionScreen` now shows an **Active / Inactive** chip next
+  to the connection pill. Tapping it calls `PATCH /conversations/{id}` to flip the state.
+  The chip is greyed out until the backend resolves the conversation ID.
+- **Files:** `conversations/ConversationRepository.kt`, `conversations/HomeViewModel.kt`,
+  `voice/VoiceAgentViewModel.kt`, `voice/VoiceSessionUiState.kt`,
+  `ui/screens/HomeScreen.kt`, `ui/screens/VoiceSessionScreen.kt`,
+  `navigation/Screen.kt`, `navigation/SpecTalkNavGraph.kt`
+
+#### Wake word always created a new conversation instead of resuming the active one
+- **Symptom:** Every "Hey Gervis" detection opened a brand-new conversation, leading to a
+  growing list of empty conversations even when an active session already existed.
+- **Root cause:** `HomeScreen` passed `null` to `onNavigateToVoiceSession()` on every wake
+  event, causing `VoiceAgentViewModel.startSession(null)` to always call
+  `tokenRepository.startVoiceSession()` (creates a new conversation).
+- **Fix:** Before navigating, `HomeScreen` now looks up the first conversation with state
+  `"active"` or `"awaiting_resume"` from the loaded list. If found, its ID is passed to the
+  navigator so `VoiceAgentViewModel` resumes that conversation. If none exists, `null` is
+  passed and a new conversation is created as before.
+- **File:** `ui/screens/HomeScreen.kt`
+
 ### Added
 
 #### Swipe-to-delete conversations
@@ -146,15 +222,6 @@ Newest entries at the top.
 - **Workaround:** Open the app and navigate to HomeScreen — the service restarts automatically.
 - **Future fix:** Add `START_STICKY` to `HotwordService.onStartCommand()` (auto-restart on
   system kill) and a `BOOT_COMPLETED` broadcast receiver (restart after reboot).
-
-### `BLUETOOTH_CONNECT` permission not requested at runtime
-- **Symptom:** BT headset audio routing and BT-triggered hotword restart do not work on a
-  fresh install because the permission dialog never appears.
-- **Root cause:** `BLUETOOTH_CONNECT` is declared in the manifest but never requested via
-  `ActivityResultContracts.RequestPermission`. The BT code is now wrapped in `runCatching`
-  so it won't crash, but it silently skips BT detection.
-- **Future fix:** Add a runtime permission request for `BLUETOOTH_CONNECT` alongside the
-  `RECORD_AUDIO` request in `HomeScreen`.
 
 ---
 

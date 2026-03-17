@@ -282,7 +282,7 @@ WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `
 ### Acceptance Criteria
 
 - [x] Wake word on phone → Gemini session starts on backend → voice conversation works end-to-end
-- [ ] `search_tool` executes on backend — Gemini speaks a grounded search result naturally
+- [X] `search_tool` executes on backend — Gemini speaks a grounded search result naturally
 - [ ] `maps_tool` executes on backend — Gemini speaks a grounded maps result naturally
 - [x] Barge-in / interrupted works: phone audio buffer clears immediately
 - [x] Turns persist to PostgreSQL in real time (visible in DB after a conversation)

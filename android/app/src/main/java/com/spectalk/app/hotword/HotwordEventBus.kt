@@ -28,7 +28,11 @@ object HotwordEventBus {
 
     /** Called by HotwordService when the wake phrase is detected. */
     fun notifyWakeWord() {
-        isPaused.value = true   // stop re-triggering while voice session handles the request
+        // Guard: if already paused (i.e., a voice session is already handling this wake event),
+        // do nothing. HotwordService fires on both partial and final results, so without this
+        // guard a single utterance of "Hey Gervis" would open multiple simultaneous connections.
+        if (isPaused.value) return
+        isPaused.value = true
         pendingWakeWord.set(true)
         _wakeWordDetected.tryEmit(Unit)
     }
