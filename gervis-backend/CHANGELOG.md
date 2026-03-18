@@ -8,6 +8,53 @@ Entries are ordered newest-first within each phase.
 ## Phase 4 - Jobs, Notifications, and Resume Flow
 > Status: Implementation complete — awaiting Cloud Run deployment and approval
 
+### [Phase 4.1] - Replace Opik with Google Cloud Trace
+**Files:** `services/tracing.py`, `ws/voice_handler.py`, `tools/location_tool.py`,
+`tools/maps_tool.py`, `tools/notification_resume_tool.py`, `pyproject.toml`,
+`cloudbuild.yaml`, `docs/phase4-deployment.md`
+
+Removed the Opik (Comet) dependency entirely. All observability is now through
+OpenTelemetry + Google Cloud Trace — no external API key required.
+
+**`services/tracing.py`** — complete rewrite:
+- Removed: `opik.configure()`, `opik.Opik()`, `get_opik_client()`, all Opik imports
+- Added: `get_tracer()` — returns the module-level `opentelemetry.trace.Tracer` or `None`
+- Added: `record_voice_turn(conversation_id, role, text)` — fire-and-forget OTel span per
+  completed voice turn; stores `conversation_id`, `role`, `text_length` (not full text,
+  to avoid PII in traces)
+- Added: `trace_span(name)` — async function decorator that wraps a call in a named OTel
+  span; no-op when tracing is off
+- `ENABLE_ADK_TRACING` env var renamed to `ENABLE_TRACING`; values: `cloud` | `console` | `off`
+- Auto-enables `cloud` mode when `GCP_PROJECT` or `GOOGLE_CLOUD_PROJECT` is set and
+  `ENABLE_TRACING` is not explicitly set — zero-config on Cloud Run
+- Cloud Trace uses Application Default Credentials (ADC) via the Cloud Run service account;
+  requires `roles/cloudtrace.agent` on the service account
+
+**Tools** — Opik decorators replaced with `@trace_span(name)`:
+- `tools/location_tool.py` — removed `import opik`, removed `@opik.track`, added `@trace_span("get_user_location")`
+- `tools/maps_tool.py` — same; `@trace_span("find_nearby_places")`
+- `tools/notification_resume_tool.py` — same; `@trace_span("start_background_job")`
+- `import os` removed from location_tool.py and maps_tool.py (was only needed for `os.getenv("OPIK_PROJECT_NAME")`)
+
+**`ws/voice_handler.py`**:
+- Removed `_opik_log_turn()` function and both call sites
+- Replaced with `record_voice_turn(conversation_id, role, text)` calls on final user/assistant transcripts
+
+**`pyproject.toml`**:
+- Removed: `opik>=1.10.42`, `opentelemetry-exporter-otlp-proto-http>=1.40.0`
+- Added: `opentelemetry-exporter-gcp-trace>=1.9.0`
+- Kept: `opentelemetry-sdk>=1.7.0`
+
+**`cloudbuild.yaml`**:
+- `ENABLE_TRACING=cloud` added to `--set-env-vars` so Cloud Trace activates automatically on deploy
+
+**`docs/phase4-deployment.md`**:
+- Added `roles/cloudtrace.agent` to the IAM setup commands
+- Updated secrets table (removed `OPIK_API_KEY`)
+- Added tracing note explaining zero-config Cloud Trace auth via ADC
+
+---
+
 ### [Phase 4.0] - Background jobs, FCM notifications, resume flow
 **New files:** `services/control_channels.py`, `services/job_service.py`,
 `services/notification_service.py`, `services/resume_event_service.py`,

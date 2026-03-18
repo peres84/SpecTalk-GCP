@@ -12,16 +12,14 @@ The session state only carries the plain-string conversation_id for the lookup.
 import logging
 from typing import Any
 
-import os
-
-import opik
 import services.location_channels as location_channels
 from google.adk.tools import ToolContext
+from services.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
 
-@opik.track(name="get_user_location", type="tool", project_name=os.getenv("OPIK_PROJECT_NAME", "gervis"))
+@trace_span("get_user_location")
 async def get_user_location(tool_context: ToolContext) -> dict[str, Any]:
     """Get the user's current GPS location from their phone.
 

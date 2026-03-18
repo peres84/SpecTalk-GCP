@@ -46,7 +46,7 @@ steps:
       - '--min-instances=1'
       - '--timeout=3600'
       - '--set-secrets=JWT_SECRET=JWT_SECRET:latest,DATABASE_URL=DATABASE_URL:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,FIREBASE_SERVICE_ACCOUNT_JSON=FIREBASE_SERVICE_ACCOUNT_JSON:latest,BACKEND_BASE_URL=BACKEND_BASE_URL:latest'
-      - '--set-env-vars=ENVIRONMENT=production,GCP_PROJECT=${PROJECT_ID},CLOUD_TASKS_QUEUE=backend-jobs,CLOUD_TASKS_LOCATION=${_REGION},CLOUD_RUN_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
+      - '--set-env-vars=ENVIRONMENT=production,GCP_PROJECT=${PROJECT_ID},CLOUD_TASKS_QUEUE=backend-jobs,CLOUD_TASKS_LOCATION=${_REGION},CLOUD_RUN_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT},ENABLE_TRACING=cloud'
       - '--no-allow-unauthenticated'
 
 substitutions:

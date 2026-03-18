@@ -46,7 +46,7 @@ from services.conversation_service import (
 from services.gemini_live_client import gemini_live_client
 import services.location_channels as location_channels
 import services.control_channels as control_channels
-from services.tracing import get_opik_client
+from services.tracing import record_voice_turn
 from services.location_context_service import (
     normalize_location_context,
     set_conversation_location_context,
@@ -59,21 +59,6 @@ from services.resume_event_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-def _opik_log_turn(conversation_id: str, role: str, text: str) -> None:
-    """Fire-and-forget: log a completed voice turn to Opik with the conversation as thread."""
-    client = get_opik_client()
-    if not client:
-        return
-    try:
-        client.trace(
-            name=f"voice_turn:{role}",
-            input={"text": text} if role == "user" else None,
-            output={"text": text} if role == "assistant" else None,
-            thread_id=conversation_id,
-        )
-    except Exception:
-        pass
 
 
 def _extract_jwt(websocket: WebSocket, token: str | None) -> dict | None:
@@ -178,7 +163,7 @@ async def _downstream_task(
                             asyncio.create_task(
                                 persist_turn(conversation_id, "user", part.text, "voice_transcript")
                             )
-                            _opik_log_turn(conversation_id, "user", part.text)
+                            record_voice_turn(conversation_id, "user", part.text)
 
                     elif event.content.role == "model":
                         await websocket.send_text(json.dumps({
@@ -190,7 +175,7 @@ async def _downstream_task(
                             asyncio.create_task(
                                 persist_turn(conversation_id, "assistant", part.text, "voice_transcript")
                             )
-                            _opik_log_turn(conversation_id, "assistant", part.text)
+                            record_voice_turn(conversation_id, "assistant", part.text)
 
                 elif part.inline_data and part.inline_data.mime_type.startswith("audio/pcm"):
                     await websocket.send_bytes(part.inline_data.data)

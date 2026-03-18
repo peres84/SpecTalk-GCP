@@ -9,12 +9,11 @@ Pricing: $25 per 1,000 grounded prompts. Free tier: 500 requests/day.
 
 import asyncio
 import logging
-import os
 from typing import Any
 
-import opik
 import services.location_channels as location_channels
 from google.adk.tools import ToolContext
+from services.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ def _resolve_location(location: str, tool_context: ToolContext | None) -> tuple[
     return normalized, True
 
 
-@opik.track(name="find_nearby_places", type="tool", project_name=os.getenv("OPIK_PROJECT_NAME", "gervis"))
+@trace_span("find_nearby_places")
 async def find_nearby_places(
     query: str,
     location: str,

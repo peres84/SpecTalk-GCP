@@ -1,98 +1,125 @@
-"""Observability setup for the SpecTalk backend.
+"""Observability using OpenTelemetry + Google Cloud Trace.
 
-Controlled by the ENABLE_ADK_TRACING environment variable:
+Auto-enabled in production when GCP_PROJECT env var is set (Cloud Run service account
+needs roles/cloudtrace.agent — no API key required).
 
-  ENABLE_ADK_TRACING=opik    — send traces to Opik (Comet) cloud UI  ← recommended
-  ENABLE_ADK_TRACING=console — print spans to stdout (no UI, fallback)
-  ENABLE_ADK_TRACING=cloud   — export to Google Cloud Trace (requires GOOGLE_CLOUD_PROJECT)
-  unset / anything else      — tracing disabled
+Controlled by ENABLE_TRACING env var:
 
-Opik credentials (add to .env):
-  OPIK_API_KEY        — from comet.com → Settings → API Keys  (required)
-  OPIK_WORKSPACE      — your Comet username or org slug        (required)
-  OPIK_PROJECT_NAME   — label shown in the Opik UI             (default: gervis)
+  ENABLE_TRACING=cloud   — export spans to Google Cloud Trace  (auto-on when GCP_PROJECT set)
+  ENABLE_TRACING=console — print spans to stdout               (useful for local debugging)
+  ENABLE_TRACING=off     — disable completely
+  unset                  — cloud if GCP_PROJECT is set, otherwise off
 
-After setup call get_opik_client() to log traces, or use @opik.track on functions.
+No OPIK_API_KEY or external credentials needed. Cloud Run ADC handles Cloud Trace auth.
 """
 
+import functools
 import logging
 import os
-from typing import Optional
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-_opik_client = None
+_tracer = None  # opentelemetry.trace.Tracer | None
 
 
 def setup_tracing() -> None:
-    global _opik_client
+    global _tracer
 
-    mode = os.getenv("ENABLE_ADK_TRACING", "").strip().lower()
+    mode = os.getenv("ENABLE_TRACING", "").strip().lower()
+
+    # Auto-detect: enable cloud trace in production when GCP_PROJECT is present
     if not mode:
+        if os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT"):
+            mode = "cloud"
+        else:
+            return  # development default: tracing off
+
+    if mode == "off":
         return
 
-    if mode == "opik":
-        api_key = os.getenv("OPIK_API_KEY", "")
-        workspace = os.getenv("OPIK_WORKSPACE", "")
-        project = os.getenv("OPIK_PROJECT_NAME", "gervis")
-
-        if not api_key:
-            logger.error("ENABLE_ADK_TRACING=opik but OPIK_API_KEY is not set — tracing disabled")
+    if mode == "cloud":
+        project_id = os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        if not project_id:
+            logger.error(
+                "ENABLE_TRACING=cloud but GCP_PROJECT is not set — tracing disabled"
+            )
             return
-        if not workspace:
-            logger.error("ENABLE_ADK_TRACING=opik but OPIK_WORKSPACE is not set — tracing disabled")
-            return
+        try:
+            from opentelemetry import trace
+            from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter  # type: ignore[import]
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        import opik
-
-        # configure() writes api_key + workspace to ~/.opik.config so all
-        # subsequent opik.Opik() calls and @opik.track decorators pick them up.
-        # project_name is NOT a configure() param — pass it per-client instead.
-        opik.configure(
-            api_key=api_key,
-            workspace=workspace,
-            use_local=False,
-            force=True,
-        )
-
-        _opik_client = opik.Opik(
-            project_name=project,
-            workspace=workspace,
-            api_key=api_key,
-        )
-        logger.info(f"Opik tracing enabled (workspace={workspace}, project={project})")
+            provider = TracerProvider()
+            provider.add_span_processor(
+                BatchSpanProcessor(CloudTraceSpanExporter(project_id=project_id))
+            )
+            trace.set_tracer_provider(provider)
+            _tracer = trace.get_tracer("gervis-backend")
+            logger.info(f"Cloud Trace enabled (project={project_id})")
+        except ImportError:
+            logger.error(
+                "opentelemetry-exporter-gcp-trace not installed — tracing disabled. "
+                "Run: uv add opentelemetry-exporter-gcp-trace"
+            )
 
     elif mode == "console":
         from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
         trace.set_tracer_provider(provider)
-        logger.info("ADK tracing enabled → console (stdout)")
-
-    elif mode == "cloud":
-        project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-        if not project_id:
-            logger.error("ENABLE_ADK_TRACING=cloud but GOOGLE_CLOUD_PROJECT is not set — tracing disabled")
-            return
-        from opentelemetry import trace
-        from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        provider = TracerProvider()
-        provider.add_span_processor(
-            BatchSpanProcessor(CloudTraceSpanExporter(project_id=project_id))
-        )
-        trace.set_tracer_provider(provider)
-        logger.info(f"ADK tracing enabled → Cloud Trace (project={project_id})")
+        _tracer = trace.get_tracer("gervis-backend")
+        logger.info("Tracing enabled → console (stdout)")
 
     else:
         logger.warning(
-            f"ENABLE_ADK_TRACING={mode!r} not recognised — use 'opik', 'console', or 'cloud'"
+            f"ENABLE_TRACING={mode!r} not recognised — use 'cloud', 'console', or 'off'"
         )
 
 
-def get_opik_client():
-    """Return the configured Opik client, or None if tracing is disabled."""
-    return _opik_client
+def get_tracer():
+    """Return the configured OpenTelemetry Tracer, or None if tracing is disabled."""
+    return _tracer
+
+
+def record_voice_turn(conversation_id: str, role: str, text: str) -> None:
+    """Record a completed voice turn as an OTel span.
+
+    Fire-and-forget safe — never raises. Text length is recorded but not the
+    full text to avoid storing PII in traces.
+    """
+    tracer = get_tracer()
+    if not tracer:
+        return
+    try:
+        with tracer.start_as_current_span(f"voice_turn.{role}") as span:
+            span.set_attribute("conversation_id", conversation_id)
+            span.set_attribute("role", role)
+            span.set_attribute("text_length", len(text))
+    except Exception:
+        pass
+
+
+def trace_span(name: str):
+    """Decorator: wraps an async function in an OTel span. No-op if tracing is off.
+
+    Usage:
+        @trace_span("find_nearby_places")
+        async def find_nearby_places(...):
+            ...
+    """
+    def decorator(fn: Callable) -> Callable:
+        @functools.wraps(fn)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            tracer = get_tracer()
+            if not tracer:
+                return await fn(*args, **kwargs)
+            with tracer.start_as_current_span(name) as span:
+                span.set_attribute("function", fn.__name__)
+                return await fn(*args, **kwargs)
+        return wrapper
+    return decorator

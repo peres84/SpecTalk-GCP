@@ -293,37 +293,57 @@ WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `
 ---
 
 ## Phase 4 — Jobs, Notifications, and Resume Flow
-**Status: `🔲 NOT STARTED`**
+**Status: `🔄 IN PROGRESS — backend complete, awaiting Cloud Run deploy + Android wiring`**
 
 Goal: Background jobs run via Cloud Tasks. Push notifications via FCM. User can leave, get
 notified when work completes, and resume naturally.
 
-### Tasks
+### Backend Tasks
 
-- [ ] `services/job_service.py` — create, update, query jobs in DB; enqueue Cloud Tasks
-- [ ] `services/notification_service.py` — FCM push via Firebase Admin SDK Messaging API
-- [ ] `services/resume_event_service.py` — create, fetch, acknowledge resume events
-- [ ] `tools/notification_resume_tool.py` — ADK tool for orchestrator
-- [ ] `api/internal/jobs.py` — `POST /internal/jobs/execute` (Cloud Tasks handler, not internet-
-      facing)
-- [ ] Wire `job_started` / `job_update` control messages to phone WebSocket
-- [ ] Wire `state_update` control message for `running_job` / `awaiting_resume` states
-- [ ] Android: handle `job_started`, `job_update` control messages → show job status in UI
-- [ ] Android: handle FCM push notification → show notification, open conversation on tap
-- [ ] Android: on conversation open after notification → backend injects resume context into
-      Gemini → Gemini plays welcome-back message
-- [ ] Android: `POST /conversations/{id}/ack-resume-event` after resume event presented
-- [ ] Conversation list badge count from `pending_resume_count`
+- [x] `services/control_channels.py` — per-connection WebSocket control message registry
+- [x] `services/job_service.py` — create, update, query jobs in DB; enqueue Cloud Tasks
+- [x] `services/notification_service.py` — FCM push via Firebase Admin SDK Messaging API
+- [x] `services/resume_event_service.py` — create, fetch, acknowledge resume events
+- [x] `tools/notification_resume_tool.py` — `start_background_job` ADK tool for orchestrator
+- [x] `api/internal/jobs.py` — `POST /internal/jobs/execute` (Cloud Tasks handler)
+- [x] Wire `job_started` / `job_update` control messages to phone WebSocket via `control_channels`
+- [x] Resume context injection into Gemini on WebSocket reconnect (welcome-back message)
+- [x] `POST /conversations/{id}/ack-resume-event` endpoint
+- [x] Replace Opik with Google Cloud Trace (`services/tracing.py` rewrite)
+- [x] `docs/phase4-deployment.md` — full GCP setup + Android changes guide
+
+### Cloud Run Deployment (required before Android testing)
+
+- [ ] Create GCP project + enable APIs (see `docs/phase4-deployment.md`)
+- [ ] Create service account with all required IAM roles (incl. `roles/cloudtrace.agent`)
+- [ ] Add all secrets to Secret Manager
+      (`JWT_SECRET`, `DATABASE_URL`, `GEMINI_API_KEY`, `FIREBASE_SERVICE_ACCOUNT_JSON`,
+      `BACKEND_BASE_URL`)
+- [ ] Create Cloud Tasks queue `backend-jobs`
+- [ ] Create `gervis-migrate` Cloud Run Job (Alembic)
+- [ ] Run first deploy via `gcloud builds submit`
+- [ ] Fill in `BACKEND_BASE_URL` secret with the Cloud Run URL after first deploy
+
+### Android Tasks (send to frontend agent)
+
+- [ ] `strings.xml` — update `backend_base_url` to Cloud Run HTTPS URL
+- [ ] `BackendVoiceClient` — handle `job_started` control message → show job indicator
+- [ ] `BackendVoiceClient` — handle `job_update` control message → update/dismiss indicator
+- [ ] FCM notification handler — tap opens matching conversation
+- [ ] On conversation open after notification → connect WebSocket → Gemini speaks welcome-back
+- [ ] Call `POST /conversations/{id}/ack-resume-event` after welcome-back message plays
+- [ ] Conversation list — show badge from `pending_resume_count`
 
 ### Acceptance Criteria
 
-- A long job (mock or real) runs in background, user closes app
-- FCM notification arrives when job completes
-- Tapping notification opens the right conversation
-- Gemini speaks a natural welcome-back message using resume event data
-- Conversation list shows badge
+- [x] Say "start a demo job" → `job_started` received at phone, job row in DB
+- [ ] `POST /internal/jobs/execute` called (manually or via Cloud Tasks) → job completes
+- [ ] FCM notification arrives when job completes
+- [ ] Tapping notification opens the right conversation
+- [ ] Gemini speaks a natural welcome-back message using resume event data
+- [ ] Conversation list shows badge, clears after `ack-resume-event`
 
-### ⏸ Awaiting approval to proceed to Phase 5
+### ⏸ Awaiting Cloud Run deploy + Android wiring before approval to proceed to Phase 5
 
 ---
 

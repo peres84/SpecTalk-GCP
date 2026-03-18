@@ -9,20 +9,15 @@ A push notification is sent when the job completes.
 
 import asyncio
 import logging
-import os
 from typing import Any
 
-import opik
 from google.adk.tools import ToolContext
+from services.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
 
-@opik.track(
-    name="start_background_job",
-    type="tool",
-    project_name=os.getenv("OPIK_PROJECT_NAME", "gervis"),
-)
+@trace_span("start_background_job")
 async def start_background_job(
     job_type: str,
     description: str,

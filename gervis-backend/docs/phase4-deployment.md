@@ -113,6 +113,10 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:gervis-backend@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/firebase.sdkAdminServiceAgent"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:gervis-backend@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/cloudtrace.agent"
 ```
 
 #### 5. Create Secrets in Secret Manager
@@ -235,7 +239,6 @@ The `cloudbuild.yaml` injects secrets via `--set-secrets`. The full list of secr
 | `GEMINI_API_KEY` | `GEMINI_API_KEY` | Yes |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | `FIREBASE_SERVICE_ACCOUNT_JSON` | Yes |
 | `BACKEND_BASE_URL` | `BACKEND_BASE_URL` | Phase 4+ |
-| `OPIK_API_KEY` | `OPIK_API_KEY` | Optional |
 
 Cloud Run env vars that don't require Secret Manager (set via `--set-env-vars` in `cloudbuild.yaml`):
 
@@ -245,7 +248,13 @@ CLOUD_TASKS_QUEUE=backend-jobs
 CLOUD_TASKS_LOCATION=us-central1
 CLOUD_RUN_SERVICE_ACCOUNT=gervis-backend@spectalk-prod.iam.gserviceaccount.com
 ENVIRONMENT=production
+ENABLE_TRACING=cloud
 ```
+
+> **Tracing**: Google Cloud Trace is used directly — no API key needed. The service account's
+> `roles/cloudtrace.agent` IAM role is all that's required. Traces appear in
+> GCP Console → Cloud Trace.
+> For local development set `ENABLE_TRACING=console` to print spans to stdout.
 
 ---
 
