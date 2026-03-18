@@ -63,3 +63,24 @@ async def set_conversation_idle(conversation_id: str) -> None:
                 await session.commit()
     except Exception as e:
         logger.warning(f"Failed to set conversation idle [{conversation_id}]: {e}")
+
+
+async def set_conversation_state(conversation_id: str, state: str) -> None:
+    """Set conversation state to any valid state value.
+
+    Valid states: idle | general_chat | coding_mode | awaiting_user_input |
+    awaiting_confirmation | running_job | awaiting_resume | completed | error
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Conversation).where(
+                    Conversation.id == uuid.UUID(conversation_id)
+                )
+            )
+            conv = result.scalar_one_or_none()
+            if conv:
+                conv.state = state
+                await session.commit()
+    except Exception as e:
+        logger.error(f"Failed to set conversation state [{conversation_id}] -> {state}: {e}")

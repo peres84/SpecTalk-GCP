@@ -10,6 +10,7 @@ from api import voice as voice_router
 from api import conversations as conversations_router
 from api import jobs as jobs_router
 from api import notifications as notifications_router
+from api.internal import jobs as internal_jobs_router
 from ws import voice_handler as ws_voice_router
 
 
@@ -49,6 +50,7 @@ app.include_router(voice_router.router, prefix="/voice", tags=["voice"])
 app.include_router(conversations_router.router, prefix="/conversations", tags=["conversations"])
 app.include_router(jobs_router.router, prefix="/jobs", tags=["jobs"])
 app.include_router(notifications_router.router, prefix="/notifications", tags=["notifications"])
+app.include_router(internal_jobs_router.router, prefix="/internal", tags=["internal"])
 app.include_router(ws_voice_router.router, prefix="/ws", tags=["websocket"])
 
 

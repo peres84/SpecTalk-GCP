@@ -23,5 +23,16 @@ class Settings(BaseSettings):
     adk_app_name: str = "spectalk"
     gemini_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
 
+    # Phase 4: Background jobs, Cloud Tasks, and FCM notifications
+    # GCP project ID — required for Cloud Tasks in production
+    gcp_project: str = ""
+    # Cloud Tasks queue name (e.g. "backend-jobs"). Leave empty to skip Cloud Tasks.
+    cloud_tasks_queue: str = ""
+    cloud_tasks_location: str = "us-central1"
+    # Full Cloud Run service URL — used as the target for Cloud Tasks callbacks
+    backend_base_url: str = "http://localhost:8080"
+    # Cloud Run service account email for OIDC token auth on Cloud Tasks callbacks
+    cloud_run_service_account: str = ""
+
 
 settings = Settings()

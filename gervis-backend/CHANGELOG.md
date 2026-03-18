@@ -5,6 +5,180 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+## Phase 4 - Jobs, Notifications, and Resume Flow
+> Status: Implementation complete — awaiting Cloud Run deployment and approval
+
+### [Phase 4.0] - Background jobs, FCM notifications, resume flow
+**New files:** `services/control_channels.py`, `services/job_service.py`,
+`services/notification_service.py`, `services/resume_event_service.py`,
+`tools/notification_resume_tool.py`, `api/internal/__init__.py`,
+`api/internal/jobs.py`, `docs/phase4-deployment.md`
+
+**Modified files:** `config.py`, `main.py`, `services/conversation_service.py`,
+`ws/voice_handler.py`, `agents/orchestrator.py`, `api/conversations.py`,
+`pyproject.toml`, `cloudbuild.yaml`
+
+---
+
+#### `services/control_channels.py` — WebSocket control message registry
+
+New module-level registry keyed by `conversation_id`, same pattern as
+`location_channels`. Tools and services call `send_control_message()` to push
+JSON to the active phone WebSocket without holding a direct WebSocket reference.
+
+```python
+control_channels.register(conversation_id, send_cb)    # called in voice_handler on connect
+control_channels.unregister(conversation_id)            # called on disconnect
+await control_channels.send_control_message(cid, msg)  # called from tools / internal handler
+```
+
+---
+
+#### `services/job_service.py` — Job DB helpers + Cloud Tasks enqueue
+
+- `create_job(conversation_id, job_type)` — creates a `Job` row with `status=queued`.
+  Resolves `user_id` from the `Conversation` row (avoids storing it in ADK session state).
+- `update_job_status(job_id, status, *, artifacts, spoken_completion_summary, ...)` — updates
+  any job fields in one call.
+- `get_job_by_id(job_id)` — internal lookup without ownership check.
+- `enqueue_cloud_task(...)` — sends an HTTP Cloud Tasks task to `POST /internal/jobs/execute`.
+  **No-op in development** if `CLOUD_TASKS_QUEUE` env var is not set — logs a warning and
+  returns cleanly. In production the task carries an OIDC token for Cloud Run auth.
+
+---
+
+#### `services/notification_service.py` — FCM push notifications
+
+- `send_push_notification(push_token, title, body, conversation_id, data)` — sends a Firebase
+  Cloud Messaging message using `firebase_admin.messaging.send()`, run in `run_in_executor` to
+  avoid blocking the async event loop. Android channel: `spectalk_jobs` (high priority).
+- `get_user_push_token(user_id)` — looks up `users.push_token` from the DB.
+
+Gracefully returns `False` (no exception) when the push token is empty or FCM fails.
+
+---
+
+#### `services/resume_event_service.py` — Resume event lifecycle
+
+- `create_resume_event(conversation_id, event_type, *, job_id, spoken_summary, ...)` —
+  inserts a `ResumeEvent` row and increments `conversations.pending_resume_count`.
+- `get_pending_resume_events(conversation_id)` — returns all unacknowledged events,
+  oldest first (used to inject resume context into Gemini on reconnect).
+- `acknowledge_resume_event(resume_event_id)` — marks acknowledged, decrements count.
+- `acknowledge_all_resume_events(conversation_id)` — batch acknowledge all pending events.
+
+---
+
+#### `tools/notification_resume_tool.py` — ADK tool `start_background_job`
+
+Added to the Gervis agent tools list. Gemini calls this when the user requests long-running
+work (coding, research, 3D models).
+
+```
+Args:
+  job_type     — "coding" | "research" | "three_d_model" | "demo"
+  description  — short description of what the job will do
+  spoken_ack   — natural spoken acknowledgment to say to the user right now
+```
+
+On call:
+1. Creates job row in DB (resolves `user_id` from conversation)
+2. Sends `{"type": "job_started", "job_id": ..., "spoken_ack": ...}` to phone via `control_channels`
+3. Transitions conversation state → `running_job`
+4. Enqueues Cloud Task (no-op in dev)
+5. Returns spoken_ack to Gemini immediately — user never waits in silence
+
+---
+
+#### `api/internal/jobs.py` — Cloud Tasks handler `POST /internal/jobs/execute`
+
+Internal endpoint called by Cloud Tasks (or manually in dev):
+
+1. Validates `X-CloudTasks-QueueName` header in `environment=production`
+2. Marks job `running`, sends `job_update` to phone
+3. Dispatches `_execute_job_by_type()` — Phase 4 has mock/demo implementation; Phase 5+ adds
+   real dispatchers (OpenClaw, etc.)
+4. On success: marks `completed`, creates `ResumeEvent`, transitions conversation →
+   `awaiting_resume`, sends `job_update` to phone, sends FCM push notification
+5. On failure: marks `failed`, creates `ResumeEvent` with error, sends FCM push, returns 500
+
+---
+
+#### `ws/voice_handler.py` — Control channel + resume context injection
+
+**Control channel registration:**
+```python
+async def _send_control_message(message: dict) -> None:
+    await websocket.send_text(json.dumps(message))
+
+control_channels.register(conversation_id, _send_control_message)
+# ... on disconnect:
+control_channels.unregister(conversation_id)
+```
+
+**Resume context injection on reconnect:**
+When the phone connects to a conversation that has pending `ResumeEvent` rows, the backend
+injects a synthetic user turn into the live session via `live_request_queue.send_content()`.
+Gemini reads the context and generates a natural welcome-back message immediately. Events are
+acknowledged as soon as injection succeeds. Wrapped in `try/except AttributeError` for
+ADK version compatibility.
+
+**Protocol docs updated** to include `job_started`, `job_update`, `state_update`.
+
+---
+
+#### `api/conversations.py` — `POST /{id}/ack-resume-event`
+
+New endpoint. Verifies conversation ownership, then calls
+`acknowledge_all_resume_events()` to clear all pending events and reset
+`pending_resume_count` to zero. Returns `204 No Content`.
+Called by the Android app after the Gemini welcome-back message has played.
+
+---
+
+#### `config.py` — Phase 4 settings
+
+```python
+gcp_project: str = ""                    # Google Cloud project ID
+cloud_tasks_queue: str = ""              # e.g. "backend-jobs" — empty = skip Cloud Tasks
+cloud_tasks_location: str = "us-central1"
+backend_base_url: str = "http://localhost:8080"  # full Cloud Run URL in production
+cloud_run_service_account: str = ""      # for OIDC token on Cloud Tasks callbacks
+```
+
+---
+
+#### `cloudbuild.yaml` — Phase 4 secrets + env vars injected on deploy
+
+`--set-secrets` now includes:
+- `FIREBASE_SERVICE_ACCOUNT_JSON` — needed for FCM in production
+- `BACKEND_BASE_URL` — injected so Cloud Tasks tasks call back to the correct Cloud Run URL
+
+`--set-env-vars` added:
+- `ENVIRONMENT=production`
+- `GCP_PROJECT`, `CLOUD_TASKS_QUEUE`, `CLOUD_TASKS_LOCATION`, `CLOUD_RUN_SERVICE_ACCOUNT`
+
+---
+
+#### `pyproject.toml` — `google-cloud-tasks>=2.16.0` added
+
+Required for Cloud Tasks enqueue in production. Gracefully not called in development
+(import skipped if `CLOUD_TASKS_QUEUE` is empty).
+
+---
+
+#### `docs/phase4-deployment.md` — Full deployment guide
+
+See [`docs/phase4-deployment.md`](./docs/phase4-deployment.md) for:
+- One-time GCP setup (project, APIs, service account, IAM, Artifact Registry, Cloud Tasks queue)
+- Secret Manager setup for all Phase 4 secrets
+- Cloud Build / Cloud Run deploy steps
+- **Android frontend changes required** (backend URL, new control message types)
+- Local testing guide (manual curl to `/internal/jobs/execute`)
+- Phase 4 acceptance checklist
+
+---
+
 ## Phase 3 - Voice Agent + Gemini Live
 > Status: In Progress
 

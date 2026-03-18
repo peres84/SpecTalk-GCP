@@ -173,3 +173,37 @@ async def list_turns(
         )
         for t in turns
     ]
+
+
+@router.post("/{conversation_id}/ack-resume-event", status_code=status.HTTP_204_NO_CONTENT)
+async def ack_resume_event(
+    conversation_id: str,
+    payload: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Acknowledge all pending resume events for a conversation.
+
+    Called by the Android app after the welcome-back message has been played
+    and the user has seen the job result. Clears the notification badge.
+    """
+    user_id = uuid.UUID(payload["sub"])
+    try:
+        conv_id = uuid.UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    # Verify ownership
+    result = await db.execute(
+        select(Conversation.id).where(
+            Conversation.id == conv_id,
+            Conversation.user_id == user_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    # Acknowledge all pending resume events (and zero out pending_resume_count)
+    from services.resume_event_service import acknowledge_all_resume_events
+    await acknowledge_all_resume_events(conversation_id)
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

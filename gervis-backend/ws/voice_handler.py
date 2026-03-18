@@ -16,6 +16,9 @@ Protocol:
                  {"type": "output_transcript", "text": "...", "is_partial": bool}
                  {"type": "turn_complete"}
                  {"type": "request_location"}
+                 {"type": "job_started", "job_id": "...", "spoken_ack": "..."}
+                 {"type": "job_update", "job_id": "...", "status": "...", "display_summary": "..."}
+                 {"type": "state_update", "state": "..."}
                  {"type": "error", "message": "..."}
 
 Auth: JWT passed as query param ?token=<jwt> OR Authorization header.
@@ -42,10 +45,15 @@ from services.conversation_service import (
 )
 from services.gemini_live_client import gemini_live_client
 import services.location_channels as location_channels
+import services.control_channels as control_channels
 from services.tracing import get_opik_client
 from services.location_context_service import (
     normalize_location_context,
     set_conversation_location_context,
+)
+from services.resume_event_service import (
+    get_pending_resume_events,
+    acknowledge_all_resume_events,
 )
 
 logger = logging.getLogger(__name__)
@@ -228,7 +236,11 @@ async def voice_websocket(
         async def _send_request_location() -> None:
             await websocket.send_text(json.dumps({"type": "request_location"}))
 
+        async def _send_control_message(message: dict) -> None:
+            await websocket.send_text(json.dumps(message))
+
         location_channels.register(conversation_id, _send_request_location)
+        control_channels.register(conversation_id, _send_control_message)
 
         live_request_queue = gemini_live_client.new_request_queue()
         live_events = gemini_live_client.start_live_session(
@@ -236,6 +248,38 @@ async def voice_websocket(
             session_id=conversation_id,
             live_request_queue=live_request_queue,
         )
+
+        # Inject pending resume context into Gemini before the first audio frame.
+        # This triggers a spoken welcome-back message when the user reconnects.
+        pending_events = await get_pending_resume_events(conversation_id)
+        if pending_events:
+            summaries = ". ".join(
+                ev.spoken_summary or ev.display_summary or f"{ev.event_type} completed"
+                for ev in pending_events
+            )
+            resume_context = (
+                f"The user has returned after being away. "
+                f"The following completed while they were gone: {summaries}. "
+                "Please greet the user warmly, briefly tell them the news, "
+                "and offer to help with next steps."
+            )
+            try:
+                live_request_queue.send_content(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(text=resume_context)],
+                    )
+                )
+                logger.info(
+                    f"[{conversation_id}] Resume context injected for {len(pending_events)} event(s)"
+                )
+                asyncio.create_task(acknowledge_all_resume_events(conversation_id))
+            except AttributeError:
+                logger.warning(
+                    f"[{conversation_id}] send_content not available in this ADK version "
+                    "— resume context injection skipped"
+                )
+
     except Exception as e:
         logger.error(f"[{conversation_id}] Failed to start ADK session: {e}")
         await websocket.send_text(json.dumps({
@@ -274,5 +318,6 @@ async def voice_websocket(
 
         logger.info(f"[{conversation_id}] Phone disconnected, starting grace timer")
         location_channels.unregister(conversation_id)
+        control_channels.unregister(conversation_id)
         audio_session_manager.start_grace_timer(conversation_id)
         asyncio.create_task(set_conversation_idle(conversation_id))
