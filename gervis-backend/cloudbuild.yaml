@@ -4,7 +4,7 @@ steps:
     args:
       - build
       - '-t'
-      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend:${SHORT_SHA}'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend:${_IMAGE_TAG}'
       - '-t'
       - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend:latest'
       - '.'
@@ -26,7 +26,7 @@ steps:
       - execute
       - gervis-migrate
       - '--region=${_REGION}'
-      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend:${SHORT_SHA}'
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend:${_IMAGE_TAG}'
       - '--wait'
     # Override container command to run Alembic instead of the app server
     # The Cloud Run Job 'gervis-migrate' must be pre-created with:
@@ -39,7 +39,7 @@ steps:
       - run
       - deploy
       - gervis-backend
-      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend:${SHORT_SHA}'
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend:${_IMAGE_TAG}'
       - '--region=${_REGION}'
       - '--platform=managed'
       - '--service-account=${_SERVICE_ACCOUNT}'
@@ -53,6 +53,7 @@ substitutions:
   _REGION: us-central1
   _REPO: gervis
   _SERVICE_ACCOUNT: gervis-backend@${PROJECT_ID}.iam.gserviceaccount.com
+  _IMAGE_TAG: latest
 
 options:
   logging: CLOUD_LOGGING_ONLY
