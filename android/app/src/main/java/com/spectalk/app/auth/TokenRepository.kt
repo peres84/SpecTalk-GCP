@@ -1,11 +1,14 @@
 package com.spectalk.app.auth
 
 import android.content.Context
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.google.firebase.messaging.FirebaseMessaging
 import com.spectalk.app.config.BackendConfig
 import com.spectalk.app.location.UserLocationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -25,6 +28,7 @@ import java.util.concurrent.TimeUnit
 class TokenRepository(context: Context) {
 
     companion object {
+        private const val TAG = "TokenRepository"
         private const val PREFS_FILE = "spectalk_secure_prefs"
         private const val KEY_JWT = "product_jwt"
         private const val KEY_USER_ID = "user_id"
@@ -70,6 +74,17 @@ class TokenRepository(context: Context) {
             .putString(KEY_JWT, jwt)
             .putString(KEY_USER_ID, userId)
             .apply()
+
+        // Proactively register FCM push token on every login.
+        // onNewToken() only fires on token refresh so the token would never
+        // reach the backend if the app was installed before the backend was live.
+        runCatching {
+            val fcmToken = FirebaseMessaging.getInstance().token.await()
+            registerPushToken(fcmToken)
+            Log.d(TAG, "Push token registered after login")
+        }.onFailure { e ->
+            Log.w(TAG, "Push token registration after login failed: ${e.message}")
+        }
 
         jwt
     }

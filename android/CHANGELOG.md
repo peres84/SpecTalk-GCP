@@ -5,6 +5,25 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — Proactive FCM push token registration on login
+
+### Fixed
+
+#### Push token never stored in backend — FCM notifications never delivered
+- **Symptom:** FCM push notifications from completed background jobs were never received.
+  The `users.push_token` column in the database was always `null`.
+- **Root cause:** `FcmService.onNewToken()` is only called by Firebase when a token is
+  first generated or rotated. If the app was installed before the backend was live, the
+  token was issued once and `onNewToken` never fired again — so `POST /notifications/device/register`
+  was never called and the backend had no token to send notifications to.
+- **Fix:** After a successful `POST /auth/session` exchange, `TokenRepository.exchangeFirebaseToken()`
+  now proactively calls `FirebaseMessaging.getInstance().token.await()` to fetch the
+  current FCM token and immediately registers it with the backend. This runs on every
+  login so the token is always up to date even if `onNewToken` never fires.
+- **File:** `auth/TokenRepository.kt`
+
+---
+
 ## [Unreleased] — GPS precision + proactive location on connect
 
 ### Added
