@@ -1,9 +1,11 @@
 package com.spectalk.app.voice
 
 import android.app.Application
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.SoundPool
 import android.util.Log
+import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.spectalk.app.R
@@ -17,7 +19,6 @@ import com.spectalk.app.hotword.HotwordEventBus
 import com.spectalk.app.location.UserLocationContext
 import com.spectalk.app.settings.AppPreferences
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -84,8 +85,6 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         _uiState.update { it.copy(isConnecting = true) }
 
         viewModelScope.launch {
-            playActivationSound()
-
             val jwt = getProductJwt()
             if (jwt.isBlank()) {
                 setError("Not signed in — please log in again.")
@@ -109,6 +108,20 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 setError("Could not start session: ${e.message}")
                 HotwordEventBus.resume()
                 return@launch
+            }
+
+            // Restore any stored PRD from a previous awaiting_confirmation state.
+            // SharedPreferences survive app backgrounding and system kills, so this
+            // rehydrates the confirmation card without requiring a WebSocket reconnect.
+            val storedState = loadConversationState(resolvedConversationId)
+            val storedPrd = loadPrdSummary(resolvedConversationId)
+            if (storedState == "awaiting_confirmation") {
+                _uiState.update {
+                    it.copy(
+                        conversationState = "awaiting_confirmation",
+                        prdSummary = storedPrd,
+                    )
+                }
             }
 
             val client = BackendVoiceClient(
@@ -198,6 +211,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                         statusMessage = "Connected — listening...",
                     )
                 }
+                playActivationSound()
                 startMicrophone()
                 resetInactivityTimer()
             }
@@ -246,7 +260,33 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             is VoiceClientEvent.StateUpdate -> {
-                _uiState.update { it.copy(statusMessage = event.state) }
+                val state = event.state
+                val convId = _uiState.value.conversationId
+                // Persist or clear state + PRD in SharedPreferences so the card survives
+                // app backgrounding. Clear on terminal states (running_job / idle).
+                if (convId != null) {
+                    when (state) {
+                        "awaiting_confirmation" -> {
+                            storeConversationState(convId, state)
+                            event.prdSummary?.let { storePrdSummary(convId, it) }
+                        }
+                        "running_job", "idle" -> {
+                            clearConversationState(convId)
+                            clearPrdSummary(convId)
+                        }
+                    }
+                }
+                _uiState.update { current ->
+                    current.copy(
+                        statusMessage = state,
+                        conversationState = state,
+                        prdSummary = when (state) {
+                            "awaiting_confirmation" -> event.prdSummary ?: current.prdSummary
+                            "running_job", "idle"   -> null
+                            else                    -> current.prdSummary
+                        },
+                    )
+                }
             }
 
             is VoiceClientEvent.JobStarted -> {
@@ -320,14 +360,12 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         val recorder = audioRecorder ?: AndroidAudioRecorder().also { audioRecorder = it }
 
         val started = recorder.start(viewModelScope) { chunk ->
-            // Gate: suppress mic while Gervis is playing to prevent echo on devices
-            // where hardware AEC alone is not reliable. When the user barges in,
-            // Gemini sends an `interrupted` event which calls player.clear(),
-            // immediately setting hasPendingAudio=false and re-enabling mic sending.
-            if (audioPlayer?.hasPendingAudio != true) {
-                lastAudioSentTime = System.currentTimeMillis()
-                client.sendAudioChunk(chunk)
-            }
+            // Always forward mic audio — hardware AEC (VOICE_COMMUNICATION source +
+            // AcousticEchoCanceler) handles echo suppression at the correct layer.
+            // Muting the mic here would prevent barge-in: Gemini would never hear the
+            // user's voice, never send `interrupted`, and the player would never clear.
+            lastAudioSentTime = System.currentTimeMillis()
+            client.sendAudioChunk(chunk)
         }
 
         if (!started) {
@@ -389,8 +427,10 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         }.getOrDefault(0)
     }
 
-    private suspend fun playActivationSound() {
-        delay(300)
+    private fun playActivationSound() {
+        if (activationSoundId > 0) {
+            soundPool?.play(activationSoundId, 1f, 1f, 0, 0, 1f)
+        }
     }
 
     private fun observeConnectedDevices() {
@@ -419,6 +459,70 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         } else {
             turns + ConversationTurn(role, text)
         }
+    }
+
+    /**
+     * Submit a PRD confirmation or change request via REST.
+     * On success the card is dismissed optimistically; the backend follows up with a
+     * state_update (running_job or idle) over the WebSocket.
+     *
+     * @param conversationId the active conversation
+     * @param confirmed      true → "Build it"; false → user wants to change something
+     * @param changeRequest  non-null only when confirmed=false; the user's change text
+     */
+    fun confirmPrd(conversationId: String, confirmed: Boolean, changeRequest: String?) {
+        viewModelScope.launch {
+            val jwt = getProductJwt()
+            if (jwt.isBlank()) {
+                setError("Not signed in — please log in again.")
+                return@launch
+            }
+            val success = runCatching {
+                conversationRepository.confirmPrd(jwt, conversationId, confirmed, changeRequest)
+            }.getOrDefault(false)
+
+            if (success) {
+                // Optimistically dismiss the card — the WebSocket state_update will follow
+                _uiState.update { it.copy(prdSummary = null) }
+                clearPrdSummary(conversationId)
+                if (!confirmed) {
+                    // "Change" path: also clear the stored state so the fallback is hidden
+                    clearConversationState(conversationId)
+                    _uiState.update { it.copy(conversationState = "idle") }
+                }
+            } else {
+                setError("Could not submit your response. Please try again.")
+            }
+        }
+    }
+
+    // ── SharedPreferences helpers for PRD persistence ────────────────────────
+
+    private fun prefs() = getApplication<Application>()
+        .getSharedPreferences(AppPreferences.PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun storePrdSummary(conversationId: String, prd: PrdSummary) {
+        prefs().edit { putString("prd_summary_$conversationId", prd.toJson()) }
+    }
+
+    private fun loadPrdSummary(conversationId: String): PrdSummary? {
+        val raw = prefs().getString("prd_summary_$conversationId", null) ?: return null
+        return PrdSummary.fromJsonString(raw)
+    }
+
+    private fun clearPrdSummary(conversationId: String) {
+        prefs().edit { remove("prd_summary_$conversationId") }
+    }
+
+    private fun storeConversationState(conversationId: String, state: String) {
+        prefs().edit { putString("conv_state_$conversationId", state) }
+    }
+
+    private fun loadConversationState(conversationId: String): String =
+        prefs().getString("conv_state_$conversationId", "") ?: ""
+
+    private fun clearConversationState(conversationId: String) {
+        prefs().edit { remove("conv_state_$conversationId") }
     }
 
     private fun getProductJwt(): String = tokenRepository.getProductJwt()

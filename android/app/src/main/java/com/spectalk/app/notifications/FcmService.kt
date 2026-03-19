@@ -11,6 +11,7 @@ import com.google.firebase.messaging.RemoteMessage
 import com.spectalk.app.MainActivity
 import com.spectalk.app.R
 import com.spectalk.app.SpecTalkApplication
+import com.spectalk.app.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -84,6 +85,27 @@ class FcmService : FirebaseMessagingService() {
             ?: "Your job has finished. Tap to continue."
 
         showJobNotification(conversationId, title, body)
+
+        // Auto-open: if the user enabled this setting, navigate to the conversation
+        // immediately without requiring a notification tap.
+        //   • emitConversationId → NavGraph collects and navigates (app already in foreground)
+        //   • startActivity       → brings app to foreground if backgrounded, then onNewIntent
+        //                           re-emits the id (singleTop — no duplicate Activity created)
+        // The notification is still shown so the user can reference or dismiss it.
+        if (AppPreferences.isAutoOpenOnNotification(this)) {
+            // Store in SharedPreferences first so the navigation survives background
+            // activity start restrictions (Android 10+). When the app comes to the
+            // foreground (via notification tap or direct launch), SpecTalkNavGraph
+            // reads and clears this value and navigates to the conversation.
+            AppPreferences.setPendingAutoOpenConversationId(this, conversationId)
+            NotificationEventBus.emitConversationId(conversationId)
+            val autoIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(MainActivity.EXTRA_CONVERSATION_ID, conversationId)
+            }
+            runCatching { startActivity(autoIntent) }
+                .onFailure { e -> Log.w(TAG, "Auto-open: could not start activity: ${e.message}") }
+        }
     }
 
     private fun showJobNotification(conversationId: String, title: String, body: String) {

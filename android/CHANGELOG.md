@@ -5,6 +5,200 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — Bug fixes: auto-open navigation + wake sound timing
+
+### Fixed
+
+#### Auto-open on job completion does not navigate to conversation [HIGH]
+- **Root cause:** Android 10+ background activity start restrictions silently block
+  `startActivity()` from `FcmService` when the app is not in the foreground. The
+  `runCatching` wrapper swallowed the exception, so the notification appeared but
+  auto-navigation never happened. The `NotificationEventBus.emitConversationId()` call
+  also had no effect because no Compose collector was active while backgrounded.
+- **Fix:** `FcmService.onMessageReceived()` now writes the `conversationId` to
+  `AppPreferences` (key `pref_pending_auto_open_conversation_id`) **before** attempting
+  `startActivity()`. On the next foreground entry, `SpecTalkNavGraph`'s `LaunchedEffect`
+  reads and clears this value and navigates to the conversation — covering the
+  background/killed case reliably. The existing `emitConversationId()` + `startActivity()`
+  path is unchanged and still handles the foreground case instantly.
+- **Files:** `settings/AppPreferences.kt`, `notifications/FcmService.kt`,
+  `navigation/SpecTalkNavGraph.kt`
+
+#### Wake confirmation sound plays before Gemini connection is ready [MEDIUM]
+- **Root cause 1:** `HotwordService.playWakeBeep()` fired a `ToneGenerator` beep
+  immediately on wake-word detection — before any WebSocket was opened. This gave the user
+  false "ready" feedback up to ~500ms early.
+- **Root cause 2:** `VoiceAgentViewModel.playActivationSound()` was called at the start of
+  `startSession()` before the WebSocket connection was even attempted. Its implementation
+  was also a stub (`delay(300)`) that never actually played any sound from the `SoundPool`.
+- **Fix:** Removed `playWakeBeep()` from `HotwordService` entirely (method and both call
+  sites in `onResult`/`onPartialResult`). Moved `playActivationSound()` to the
+  `VoiceClientEvent.Connected` handler in `VoiceAgentViewModel`, right before
+  `startMicrophone()` — the sound now plays at the exact moment the backend connection is
+  ready. Fixed `playActivationSound()` to call `soundPool?.play(...)` instead of the no-op
+  `delay(300)` stub. Removed `suspend` modifier (no longer needed).
+- **Files:** `hotword/HotwordService.kt`, `voice/VoiceAgentViewModel.kt`
+
+---
+
+## [Unreleased] — Setting: auto-open conversation on job-complete notification
+
+### Added
+
+#### Settings toggle — "Auto-open on job complete"
+- New boolean preference `pref_auto_open_on_notification` (default **off**) in
+  `AppPreferences`. Two new methods: `isAutoOpenOnNotification(context)` and
+  `setAutoOpenOnNotification(context, enabled)`.
+- **File:** `settings/AppPreferences.kt`
+
+#### `FcmService` — auto-open logic on message received
+- When the setting is enabled, `onMessageReceived` does two things in addition to showing
+  the notification (which is still shown regardless):
+  1. `NotificationEventBus.emitConversationId(conversationId)` — if the app is already in
+     the foreground the NavGraph collects this immediately and navigates.
+  2. `startActivity(FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_SINGLE_TOP)` — brings the app to
+     the foreground if it is backgrounded; `MainActivity.onNewIntent` fires, re-emits the
+     conversation ID, and the NavGraph navigates. Wrapped in `runCatching` so a system
+     background-activity-start restriction degrades gracefully (notification tap still works).
+- Once `VoiceSessionScreen` opens, `startSession()` connects the WebSocket and the backend's
+  existing resume-event injection makes Gervis speak the result naturally — no additional
+  code required.
+- **File:** `notifications/FcmService.kt`
+
+#### `SettingsScreen` — "Notifications" section
+- New section header "Notifications" below the Location section.
+- Uses new private `SettingsToggleRow` composable (title + subtitle + `Switch`) that matches
+  the existing `LocationSettingsSection` visual style — reusable for future toggles.
+- **File:** `ui/screens/SettingsScreen.kt`
+
+---
+
+## [Unreleased] — Fix barge-in silenced while Gervis speaks
+
+### Fixed
+
+#### Mic muted during playback — barge-in never reached backend
+- **Symptom:** Speaking while Gervis was mid-response had no effect — the response kept
+  playing and Gervis never stopped.
+- **Root cause:** `VoiceAgentViewModel.startMicrophone()` gated audio chunks behind
+  `hasPendingAudio != true`, muting the mic completely while the player had audio queued.
+  The backend never received the user's voice, so Gemini never detected a barge-in and
+  never sent `interrupted`.
+- **Fix:** Removed the gate. Mic chunks are now sent unconditionally. Hardware AEC
+  (`VOICE_COMMUNICATION` audio source + `AcousticEchoCanceler`) is the correct layer for
+  echo suppression — the ViewModel should not silence the mic. The `hasPendingAudio` check
+  inside the inactivity timer loop is unchanged (it correctly prevents auto-disconnect while
+  Gervis is speaking).
+- **File:** `voice/VoiceAgentViewModel.kt`
+
+---
+
+## [Unreleased] — Phase 5: coding mode UI + PRD confirmation card
+
+### Added
+
+#### `PrdSummary` — data class for PRD persistence
+- New `data class PrdSummary` in `voice/PrdSummary.kt` holding all fields produced by the
+  backend's PRD shaper: `projectName`, `description`, `targetPlatform` (web / mobile / backend /
+  fullstack), `keyFeatures`, `techStack`, `scopeEstimate` (small / medium / large).
+- `toJson()` serialises to a JSON string for SharedPreferences storage.
+- `fromJson(JSONObject)` and `fromJsonString(String)` parse back from storage; both return
+  `null` on any parse error (never crash).
+- **File:** `voice/PrdSummary.kt`
+
+#### `BackendVoiceClient` — parse PRD summary from `awaiting_confirmation` state_update
+- `StateUpdate` event extended with optional `prdSummary: PrdSummary? = null` field (default
+  null for all other state values, so existing call-sites are unaffected).
+- In `handleControlMessage`, when `state == "awaiting_confirmation"`, parses the nested
+  `prd_summary` JSON object from the control message into a `PrdSummary` before emitting.
+- **File:** `voice/BackendVoiceClient.kt`
+
+#### `VoiceSessionUiState` — two new fields for Phase 5 state
+- `conversationState: String = ""` — mirrors the latest backend conversation state received
+  via `state_update` (e.g. `"idle"`, `"coding_mode"`, `"awaiting_confirmation"`). Used by
+  `VoiceSessionScreen` to decide which overlays to show.
+- `prdSummary: PrdSummary? = null` — non-null only while the conversation is in
+  `awaiting_confirmation`. Cleared automatically on `running_job` or `idle` transitions.
+- **File:** `voice/VoiceSessionUiState.kt`
+
+#### `VoiceAgentViewModel` — full Phase 5 state handling + PRD persistence
+- **`StateUpdate` handler** now dispatches on three new state values:
+  - `"coding_mode"` — updates `conversationState`; no card shown (user responds by voice).
+  - `"awaiting_confirmation"` — stores the `prd_summary` in SharedPreferences, updates
+    `conversationState` and `prdSummary` in UI state so the card renders immediately.
+  - `"running_job"` / `"idle"` — clears stored state + PRD from SharedPreferences, sets
+    `prdSummary = null` to dismiss the card.
+- **PRD persistence** — six new private helpers manage two SharedPreferences keys per
+  conversation:
+  - `prd_summary_<conversationId>` — JSON-serialised `PrdSummary`.
+  - `conv_state_<conversationId>` — the stored backend state string.
+  - Both keys use the existing `spectalk_prefs` SharedPreferences file so no new file is
+    created.
+- **`startSession()` restoration** — after resolving the conversation ID, the ViewModel reads
+  `conv_state_<id>` and `prd_summary_<id>` from SharedPreferences. If the stored state is
+  `"awaiting_confirmation"`, it immediately updates the UI state so the card appears before
+  the WebSocket even connects — covers the app-backgrounded case without a round-trip.
+- **`confirmPrd(conversationId, confirmed, changeRequest)`** — new public method. Calls
+  `ConversationRepository.confirmPrd()` on a coroutine. On success, optimistically clears
+  `prdSummary` from UI state and removes the SharedPreferences entries. On failure, shows
+  an error snackbar. The WebSocket `state_update` (running_job or idle) follows shortly and
+  confirms the transition.
+- **File:** `voice/VoiceAgentViewModel.kt`
+
+#### `ConversationRepository.confirmPrd` — new REST call
+- `POST /conversations/{conversationId}/confirm`
+  - Body `{"confirmed": true}` for "Build it".
+  - Body `{"confirmed": false, "change_request": "..."}` for "Change something".
+  - Returns `true` on 2xx, `false` on any network error or non-2xx (404 = no pending PRD).
+- Idiomatic: uses the same `OkHttpClient`, timeout, and error-handling pattern as
+  `ackResumeEvent`.
+- **File:** `conversations/ConversationRepository.kt`
+
+#### `PrdConfirmationCard` — new composable
+- Bottom-sheet-style `Card` with rounded top corners; appears as an overlay inside
+  `VoiceSessionScreen` when `state == "awaiting_confirmation"`.
+- **Card contents (top to bottom):**
+  1. Drag handle bar (decorative).
+  2. Header row: project name (titleLarge bold) + `ScopeBadge` pill (green = small / amber =
+     medium / red = large).
+  3. Description text (bodyMedium).
+  4. `PlatformChip`: icon + label for web / mobile / backend / full stack.
+  5. Tech stack in `FontFamily.Monospace` using primary colour.
+  6. Up to 5 bullet-point key features (bodySmall).
+  7. `HorizontalDivider`.
+  8. Footer row: "Change something" (outlined) + "Build it" (filled primary) buttons.
+- **"Change something" flow:** tapping reveals an `AnimatedVisibility` block containing an
+  `OutlinedTextField` and a "Send" button. Send is disabled while the field is blank.
+  The text field captures the user's change request, which is passed to `onChangeSomething`.
+- Voice confirmation (user says "yes"/"no") dismisses the card automatically via the
+  `state_update: running_job` or `state_update: idle` WebSocket message — no button tap needed.
+- **File:** `ui/components/PrdConfirmationCard.kt`
+
+#### `VoiceSessionScreen` — PRD card overlay + coding mode subtitle + fallback
+- Scaffold content wrapped in a `Box` so the PRD card can be layered over the transcript.
+- **PRD card overlay:** `AnimatedVisibility(slideInVertically / slideOutVertically)` aligned
+  to `BottomCenter`. Visible whenever `uiState.prdSummary != null`. Passes `confirmPrd()`
+  callbacks to the card. Stays visible after phone disconnects (card persists until state
+  resolves).
+- **Fallback message:** shown at the bottom when `conversationState == "awaiting_confirmation"`
+  AND `prdSummary == null` AND the session is not connected. Informs the user: *"Your project
+  plan is ready. Tap + and say 'Hey Gervis' to review it by voice."* Covers the edge case
+  where the app was killed before the WebSocket delivered the `prd_summary`.
+- **`coding_mode` subtitle:** `CompactStatusRow` now shows an italic "Gervis is designing
+  your project…" line (in secondary colour) when `conversationState == "coding_mode"`.
+  Gervis is asking clarifying questions during this phase; no buttons are needed.
+- **File:** `ui/screens/VoiceSessionScreen.kt`
+
+### Changed
+
+#### `HomeScreen` — `awaiting_confirmation` chip label renamed to "Review"
+- `stateLabel("awaiting_confirmation")` was `"Confirm"`, now `"Review"` to match the
+  acceptance criteria and align with the amber chip colour (the chip already used
+  `MaterialTheme.colorScheme.tertiary`).
+- **File:** `ui/screens/HomeScreen.kt`
+
+---
+
 ## [Unreleased] — FCM notification tap → open conversation + ack-resume-event
 
 ### Added

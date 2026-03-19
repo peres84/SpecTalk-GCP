@@ -3,6 +3,7 @@ package com.spectalk.app.navigation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -12,6 +13,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.spectalk.app.auth.AuthViewModel
 import com.spectalk.app.notifications.NotificationEventBus
+import com.spectalk.app.settings.AppPreferences
 import com.spectalk.app.ui.screens.HomeScreen
 import com.spectalk.app.ui.screens.LoginScreen
 import com.spectalk.app.ui.screens.RegisterScreen
@@ -24,9 +26,21 @@ fun SpecTalkNavGraph() {
     val navController = rememberNavController()
     val authViewModel: AuthViewModel = viewModel()
     val authState by authViewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
-    // Navigate to the right conversation when user taps an FCM notification
+    // Navigate to the right conversation when user taps an FCM notification, or when
+    // an auto-open was queued while the app was in the background (Android 10+ blocks
+    // background activity starts, so we persist the id in SharedPreferences and consume
+    // it here on the next foreground entry).
     LaunchedEffect(Unit) {
+        // Background/killed case: consume the SharedPreferences queue written by FcmService
+        AppPreferences.getPendingAutoOpenConversationId(context)?.let { id ->
+            AppPreferences.clearPendingAutoOpenConversationId(context)
+            navController.navigate(Screen.VoiceSession.routeWith(id)) {
+                popUpTo(Screen.Home.route) { inclusive = false }
+            }
+        }
+        // Foreground case: FCM arrived while the app was already running
         NotificationEventBus.pendingConversationId.collect { conversationId ->
             navController.navigate(Screen.VoiceSession.routeWith(conversationId)) {
                 popUpTo(Screen.Home.route)

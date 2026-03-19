@@ -370,25 +370,42 @@ notified when work completes, and resume naturally.
 ---
 
 ## Phase 5 — Coding Mode and OpenClaw Integration
-**Status: `🔲 NOT STARTED`**
+**Status: `🔲 IN PROGRESS`**
 
 Goal: User can describe a coding project by voice. The backend shapes the requirements, asks
 clarifying questions, requests confirmation, and dispatches to OpenClaw as a background job.
 
 ### Tasks
 
-- [ ] `agents/team_code_pr_designers/` — four subagents (frontend, backend, security,
-      architecture) that collaboratively shape a PRD
-- [ ] `tools/openclaw_coding_tool.py` — submit approved PRD to OpenClaw, poll status, collect
-      artifacts
-- [ ] Orchestrator: detect coding intent, transition to `coding_mode` state
-- [ ] Orchestrator: activate `team_code_pr_designers`, ask one clarifying question at a time
-- [ ] Orchestrator: produce PRD summary, request confirmation via `confirm_action` state
-- [ ] Confirmation flow: intercept "yes/no" transcript, resolve `pending_action`, dispatch job
-- [ ] Android: show `awaiting_confirmation` UI state (confirmation prompt, yes/no visual)
-- [ ] Android: `POST /conversations/{id}/pending-turn` for returning users in gated state
-- [ ] Test full coding mode lifecycle: voice request → questions → PRD → confirm → job → notify →
-      resume
+- [x] `agents/team_code_pr_designers/` — PRD shaper agent using Gemini + Search grounding
+- [x] `tools/openclaw_coding_tool.py` — coding job executor (mock: asyncio.sleep(8) + GitHub URL)
+- [x] `tools/coding_tools.py` — three ADK tools: request_clarification, generate_and_confirm_prd, confirm_and_dispatch
+- [x] Orchestrator: detect coding intent, transition to `coding_mode` state, ask clarifying questions
+- [x] Orchestrator: generate PRD summary, send `state_update: awaiting_confirmation` with `prd_summary`
+- [x] Confirmation flow: `POST /conversations/{id}/confirm` endpoint, resolves PendingAction, dispatches job
+- [x] Android: `PrdSummary` data class + JSON serialisation / deserialisation
+- [x] Android: `BackendVoiceClient` — parse `prd_summary` from `awaiting_confirmation` state_update
+- [x] Android: `VoiceSessionUiState` — add `conversationState` + `prdSummary` fields
+- [x] Android: `VoiceAgentViewModel` — handle coding_mode / awaiting_confirmation / idle states, PRD SharedPreferences persistence
+- [x] Android: `VoiceAgentViewModel.confirmPrd()` — calls `POST /conversations/{id}/confirm`
+- [x] Android: `ConversationRepository.confirmPrd()` — REST client for confirm endpoint
+- [x] Android: `PrdConfirmationCard` composable — project name, scope badge, platform chip, tech stack, features, Build it / Change something actions
+- [x] Android: `VoiceSessionScreen` — PRD card overlay (slide-up AnimatedVisibility) + coding_mode subtitle + fallback message
+- [x] Android: `HomeScreen` — `awaiting_confirmation` chip label changed to "Review"
+- [x] **Bug fix [HIGH]:** Auto-open on job completion does not navigate to conversation
+      - Root cause: Android 10+ background activity start restrictions block `startActivity()`
+        from `FcmService`; exception swallowed silently
+      - Fix: persist `conversationId` to `AppPreferences` before `startActivity()`; NavGraph
+        reads + clears on next foreground entry and navigates. Foreground path unchanged.
+      - Files: `AppPreferences.kt`, `FcmService.kt`, `SpecTalkNavGraph.kt`
+- [x] **Bug fix [MEDIUM]:** Wake confirmation sound plays before Gemini connection is ready
+      - Root cause: `HotwordService.playWakeBeep()` fired immediately on wake detection;
+        `VoiceAgentViewModel.playActivationSound()` was a no-op stub (`delay(300)`) called
+        before WebSocket was even opened
+      - Fix: removed `playWakeBeep()` from `HotwordService`; moved + fixed
+        `playActivationSound()` to `VoiceClientEvent.Connected` handler in ViewModel
+      - Files: `HotwordService.kt`, `VoiceAgentViewModel.kt`
+- [ ] Test full coding mode lifecycle: voice request → questions → PRD → confirm → job → notify → resume
 
 ### Acceptance Criteria
 

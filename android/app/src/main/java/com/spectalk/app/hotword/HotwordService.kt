@@ -8,8 +8,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -22,7 +20,6 @@ import com.spectalk.app.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONException
@@ -197,7 +194,6 @@ class HotwordService : Service(), RecognitionListener {
             val text = JSONObject(hypothesis).optString("text", "").trim()
             if (text.isNotEmpty() && text != "[unk]" && isWakePhrase(text)) {
                 Log.i(TAG, "Wake word detected: \"$text\"")
-                playWakeBeep()
                 HotwordEventBus.notifyWakeWord()
                 postWakeNotification()
             }
@@ -212,7 +208,6 @@ class HotwordService : Service(), RecognitionListener {
             val text = JSONObject(hypothesis).optString("partial", "").trim()
             if (text.isNotEmpty() && isWakePhrase(text)) {
                 Log.i(TAG, "Wake word detected (partial): \"$text\"")
-                playWakeBeep()
                 HotwordEventBus.notifyWakeWord()
                 postWakeNotification()
             }
@@ -232,17 +227,6 @@ class HotwordService : Service(), RecognitionListener {
 
     override fun onTimeout() {
         updateListeningState()
-    }
-
-    private fun playWakeBeep() {
-        runCatching {
-            val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
-            tg.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
-            serviceScope.launch {
-                delay(280)
-                tg.release()
-            }
-        }
     }
 
     private fun isWakePhrase(text: String): Boolean {
