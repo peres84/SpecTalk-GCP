@@ -228,6 +228,9 @@ async def voice_websocket(
         control_channels.register(conversation_id, _send_control_message)
 
         live_request_queue = gemini_live_client.new_request_queue()
+        # Register the queue so inject_job_result() can speak completed jobs immediately
+        # when the phone is still connected (fast jobs that finish during the session).
+        audio_session_manager.register_live_queue(conversation_id, live_request_queue)
         live_events = gemini_live_client.start_live_session(
             user_id=user_id,
             session_id=conversation_id,
@@ -304,5 +307,6 @@ async def voice_websocket(
         logger.info(f"[{conversation_id}] Phone disconnected, starting grace timer")
         location_channels.unregister(conversation_id)
         control_channels.unregister(conversation_id)
+        audio_session_manager.unregister_live_queue(conversation_id)
         audio_session_manager.start_grace_timer(conversation_id)
         asyncio.create_task(set_conversation_idle(conversation_id))

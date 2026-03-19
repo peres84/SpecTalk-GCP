@@ -13,6 +13,12 @@ Usage (local testing):
     curl -X POST http://localhost:8080/internal/jobs/execute \\
          -H "Content-Type: application/json" \\
          -d '{"job_id":"<uuid>","job_type":"demo","conversation_id":"<uuid>","user_id":"<uuid>"}'
+
+Delivery strategy (job completes):
+  1. Try to inject spoken_summary directly into the live Gemini session via
+     audio_session_manager.inject_job_result(). Gervis speaks immediately.
+  2. If session is not live (phone disconnected / different Cloud Run instance):
+     create a resume_event + set conversation to awaiting_resume + send FCM push.
 """
 
 import asyncio
@@ -42,8 +48,9 @@ async def execute_job(
 ):
     """Execute a background job dispatched by Cloud Tasks.
 
-    Updates job status, creates a resume event, and sends an FCM push
-    notification when the job completes or fails.
+    Updates job status, then either:
+    - Injects the result into the live Gemini session (phone still connected), or
+    - Creates a resume event + FCM notification (phone disconnected).
     """
     from config import settings
 
@@ -59,6 +66,7 @@ async def execute_job(
     from services.resume_event_service import create_resume_event
     from services.control_channels import send_control_message
     from services.conversation_service import set_conversation_state
+    from services.audio_session_manager import audio_session_manager
 
     job_id = body.job_id
     conversation_id = body.conversation_id
@@ -103,20 +111,7 @@ async def execute_job(
             artifacts=artifacts,
         )
 
-        # Create resume event — this is what the welcome-back flow reads
-        resume_event = await create_resume_event(
-            conversation_id=conversation_id,
-            event_type="job_completed",
-            job_id=job_id,
-            spoken_summary=spoken_summary,
-            display_summary=display_summary,
-            artifacts=artifacts,
-        )
-
-        # Transition conversation to awaiting_resume
-        await set_conversation_state(conversation_id, "awaiting_resume")
-
-        # Notify the phone if still connected
+        # Always send the job_update control message (delivered if phone is connected)
         await send_control_message(conversation_id, {
             "type": "job_update",
             "job_id": job_id,
@@ -124,21 +119,52 @@ async def execute_job(
             "display_summary": display_summary,
         })
 
-        # FCM push notification
-        push_token = await get_user_push_token(user_id)
-        logger.info(f"[{conversation_id}] FCM push_token for user {user_id}: {'found' if push_token else 'NULL — skipping notification'}")
-        if push_token:
-            await send_push_notification(
-                push_token=push_token,
-                title="SpecTalk — Job Complete",
-                body=display_summary,
-                conversation_id=conversation_id,
-                data={
-                    "job_id": job_id,
-                    "resume_event_id": str(resume_event.id),
-                    "event_type": "job_completed",
-                },
+        # --- Smart delivery: live injection vs FCM ---
+        # Try to speak the result directly into the live Gemini session.
+        # This is best-effort: succeeds when the phone WebSocket is still open on
+        # this Cloud Run instance; falls through to FCM when the session is gone.
+        injected = audio_session_manager.inject_job_result(conversation_id, spoken_summary)
+
+        if injected:
+            # Gervis will speak the result immediately — no FCM or resume event needed.
+            logger.info(
+                f"[{conversation_id}] Job {job_id} result injected into live session "
+                f"— skipping FCM and resume event"
             )
+        else:
+            # Phone is not connected (or different instance) — use FCM + resume flow.
+            logger.info(
+                f"[{conversation_id}] Job {job_id} session not live — creating resume event + FCM"
+            )
+
+            resume_event = await create_resume_event(
+                conversation_id=conversation_id,
+                event_type="job_completed",
+                job_id=job_id,
+                spoken_summary=spoken_summary,
+                display_summary=display_summary,
+                artifacts=artifacts,
+            )
+
+            await set_conversation_state(conversation_id, "awaiting_resume")
+
+            push_token = await get_user_push_token(user_id)
+            logger.info(
+                f"[{conversation_id}] FCM push_token for user {user_id}: "
+                f"{'found' if push_token else 'NULL — skipping notification'}"
+            )
+            if push_token:
+                await send_push_notification(
+                    push_token=push_token,
+                    title="SpecTalk — Job Complete",
+                    body=display_summary,
+                    conversation_id=conversation_id,
+                    data={
+                        "job_id": job_id,
+                        "resume_event_id": str(resume_event.id),
+                        "event_type": "job_completed",
+                    },
+                )
 
         logger.info(f"[{conversation_id}] Job {job_id} completed successfully")
         return {"status": "ok", "job_id": job_id}
@@ -150,6 +176,10 @@ async def execute_job(
         error_summary = f"The {body.job_type} job failed: {str(e)}"
 
         await update_job_status(job_id, "failed", error_summary=error_summary)
+
+        # For failures: always create a resume event and notify via FCM.
+        # Even if the session is live, failures warrant a persistent notification
+        # so the user can review them later.
         await create_resume_event(
             conversation_id=conversation_id,
             event_type="job_failed",
@@ -166,6 +196,12 @@ async def execute_job(
             "status": "failed",
             "display_summary": error_summary,
         })
+
+        # Also try to inject the failure message into the live session
+        audio_session_manager.inject_job_result(
+            conversation_id,
+            f"Unfortunately, your {body.job_type} job didn't complete. {error_summary}",
+        )
 
         push_token = await get_user_push_token(user_id)
         if push_token:

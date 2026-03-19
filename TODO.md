@@ -321,6 +321,9 @@ notified when work completes, and resume naturally.
 - [x] `BACKEND_BASE_URL` secret — fixed Windows `\r\r` carriage return corruption (was causing 400 Invalid URL on task enqueue)
 - [x] `main.py` — removed duplicate `GEMINI_API_KEY` env var (was causing genai SDK to init two connections → double audio response)
 - [x] `api/internal/jobs.py` — added push_token null logging to diagnose silent FCM skip
+- [x] `services/audio_session_manager.py` — `register_live_queue` / `unregister_live_queue` / `inject_job_result` for live session injection
+- [x] `ws/voice_handler.py` — register live queue on connect, unregister on disconnect
+- [x] `api/internal/jobs.py` — smart delivery: inject result into live Gemini session if phone still connected; FCM only as fallback
 
 ### Cloud Run Deployment
 
@@ -401,11 +404,11 @@ clarifying questions, requests confirmation, and dispatches to OpenClaw as a bac
 ## Phase 6 — Advanced Features
 **Status: `🔲 NOT STARTED`**
 
-Goal: 3D model workflow, long-term memory, artifact browser in app, richer multimodal handling.
+Goal: describe-image, long-term memory, artifact browser in app, richer multimodal handling.
 
 ### Tasks
 
-- [ ] `tools/three_d_model_tool.py` — validate 4-image set, submit job, return artifact refs
+- [ ] `tools/describe_image_tool.py` — validate an image, submit job, return artifact refs 
 - [ ] `tools/memory_tool.py` — save/retrieve durable user memory, session summarization
 - [ ] `tools/openclaw_assistant_tool.py` (optional) — lightweight OpenClaw assistance
 - [ ] Android: `image` control message sending from Meta Glasses frames and phone camera

@@ -5,6 +5,52 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — FCM notification tap → open conversation + ack-resume-event
+
+### Added
+
+#### FcmService — real notification on job completion
+- `onMessageReceived` now parses the `conversation_id` from the FCM data payload and shows
+  a high-priority Android notification (`CHANNEL_ID_RESUME`) with `PendingIntent` to
+  `MainActivity`.
+- Notification title/body come from the FCM notification block if present, otherwise from
+  `data["title"]` / `data["display_summary"]` sent by the backend.
+- Notification ID is `conversation_id.hashCode()` so repeated completions from the same
+  conversation replace rather than stack.
+- **File:** `notifications/FcmService.kt`
+
+#### NotificationEventBus — singleton bridge for tap events
+- New `object NotificationEventBus` with a `SharedFlow<String>` carrying conversation IDs.
+- Decouples `MainActivity` (Activity world) from `SpecTalkNavGraph` (Compose world) without
+  requiring a ViewModel or Activity reference inside the NavGraph.
+- **File:** `notifications/NotificationEventBus.kt`
+
+#### MainActivity — intent handling (cold + warm start)
+- Reads `EXTRA_CONVERSATION_ID` from the launch intent in `onCreate` (cold start from tapped
+  notification) and emits to `NotificationEventBus`.
+- Overrides `onNewIntent` to handle the same when the app is already running in foreground.
+- `android:launchMode="singleTop"` added to `AndroidManifest.xml` — required for
+  `onNewIntent` to fire instead of creating a second Activity instance.
+- **File:** `MainActivity.kt`, `AndroidManifest.xml`
+
+#### SpecTalkNavGraph — navigate on notification tap
+- `LaunchedEffect(Unit)` collects from `NotificationEventBus.pendingConversationId` and
+  navigates to `VoiceSessionScreen` for the target conversation, popping back to Home.
+- **File:** `navigation/SpecTalkNavGraph.kt`
+
+#### ConversationRepository.ackResumeEvent
+- New `suspend fun ackResumeEvent(jwt, conversationId)` — `POST /conversations/{id}/ack-resume-event`.
+- Idempotent: safe to call when no pending events exist.
+- **File:** `conversations/ConversationRepository.kt`
+
+#### VoiceAgentViewModel — auto-ack after welcome-back
+- Calls `ackResumeEvent` after the first `OutputTranscript` per session.
+- Guarded by `resumeEventAcked` flag (reset on each `startSession`) so it fires exactly once.
+- Clears the conversation badge after Gervis delivers any welcome-back or first spoken message.
+- **File:** `voice/VoiceAgentViewModel.kt`
+
+---
+
 ## [Unreleased] — Fix echo: gate mic during playback
 
 ### Fixed

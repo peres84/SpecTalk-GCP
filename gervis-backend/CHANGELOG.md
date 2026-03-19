@@ -8,6 +8,92 @@ Entries are ordered newest-first within each phase.
 ## Phase 4 - Jobs, Notifications, and Resume Flow
 > Status: **Deployed** — running on Cloud Run (spectalk-488516, us-central1)
 
+### [Phase 4.5] - Smart job delivery: live injection vs FCM fallback
+**Files:** `services/audio_session_manager.py`, `ws/voice_handler.py`, `api/internal/jobs.py`
+
+#### Problem
+When a background job completes while the phone WebSocket is still open (fast research queries,
+< 2s), the backend sent a `job_update` control message and an FCM push notification — but
+Gervis never spoke the result. The user had to tap the notification, leave the current
+conversation, and reconnect to hear the answer. This was especially jarring for quick jobs
+where the voice session was still active.
+
+#### Root cause
+The job completion path only knew two routes: control-channel message (UI update) and
+FCM + resume event (for reconnect). It never injected the result back into the live Gemini
+session, so Gervis had nothing to say.
+
+#### Fix: two-path delivery
+
+**`services/audio_session_manager.py` — `register_live_queue` / `inject_job_result`:**
+
+Added two new methods to `AudioSessionManager`:
+- `register_live_queue(conversation_id, queue)` — stores the active `LiveRequestQueue`
+  while a WebSocket is streaming. Called from `voice_handler.py` immediately after the
+  queue is created.
+- `unregister_live_queue(conversation_id)` — clears the reference when the phone
+  disconnects (called in the finally block of the WebSocket handler).
+- `inject_job_result(conversation_id, spoken_summary)` — if a queue is registered,
+  calls `queue.send_content()` with a system prompt that causes Gervis to speak the
+  result naturally in the current conversation. Returns `True` on success, `False` when
+  the session is not live (different instance or phone disconnected).
+
+**`ws/voice_handler.py` — register / unregister the queue:**
+
+Two one-liners added:
+```python
+audio_session_manager.register_live_queue(conversation_id, live_request_queue)  # after queue created
+audio_session_manager.unregister_live_queue(conversation_id)  # in finally block
+```
+
+**`api/internal/jobs.py` — smart delivery routing:**
+
+After a job completes successfully:
+1. Call `audio_session_manager.inject_job_result(conversation_id, spoken_summary)`
+2. If `True` → Gervis speaks immediately. Skip FCM and resume event entirely.
+3. If `False` → create resume event, set conversation to `awaiting_resume`, send FCM.
+
+For failures: always create a resume event and FCM (so the user has a persistent record),
+but also try live injection so Gervis can speak the failure reason immediately if connected.
+
+#### Multi-instance caveat
+`audio_session_manager` is in-process memory. With Cloud Run multi-instance scaling, a
+Cloud Tasks request may land on a different instance than the active WebSocket — in that
+case `inject_job_result` returns `False` and FCM fires normally. The fast-job optimization
+works reliably on the same instance (the common case when `min-instances=0` and there is
+one active connection).
+
+#### UX result
+- **Fast jobs (< session timeout, same instance):** Gervis speaks immediately mid-conversation.
+  No notification, no tap required.
+- **Slow/disconnected jobs:** FCM push → tap → reconnect → welcome-back as before.
+
+---
+
+### [Phase 4.4] - FCM end-to-end confirmed + Android notification tap wiring
+**Files:** Android — `FcmService.kt`, `MainActivity.kt`, `NotificationEventBus.kt`,
+`SpecTalkNavGraph.kt`, `ConversationRepository.kt`, `VoiceAgentViewModel.kt`,
+`AndroidManifest.xml`; Backend — `TODO.md`
+
+FCM push notifications confirmed working end-to-end. Android side fully wired.
+
+**Android changes:**
+- `FcmService.onMessageReceived`: parses `conversation_id` from data payload, shows a
+  high-priority notification (`CHANNEL_ID_RESUME`) with `PendingIntent` to `MainActivity`.
+- `NotificationEventBus`: new singleton `SharedFlow` that bridges notification tap events
+  to the Compose NavGraph without needing Activity references.
+- `MainActivity`: added `android:launchMode="singleTop"` (required for `onNewIntent`),
+  emits `conversation_id` from `onCreate` (cold start) and `onNewIntent` (warm start) to
+  the bus.
+- `SpecTalkNavGraph`: `LaunchedEffect` collects from `NotificationEventBus` and navigates
+  to `VoiceSessionScreen` for the target conversation.
+- `ConversationRepository.ackResumeEvent`: new method — `POST /conversations/{id}/ack-resume-event`.
+- `VoiceAgentViewModel`: calls `ackResumeEvent` after the first `OutputTranscript` per session
+  (idempotent — safe when no pending events exist). This clears the conversation badge after
+  Gervis delivers the welcome-back message.
+
+---
+
 ### [Phase 4.3] - Cloud Run deployment fixes
 **Files:** `cloudbuild.yaml`, `config.py`, `docs/phase4-deployment.md`
 
