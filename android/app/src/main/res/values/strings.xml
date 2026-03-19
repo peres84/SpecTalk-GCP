@@ -4,7 +4,7 @@
          Authentication → Sign-in method → Google → Web SDK configuration -->
     <string name="google_web_client_id">223350201590-7tva8h28tgcgfu10lpttgsvba04n4u3l.apps.googleusercontent.com</string>
     <!-- Backend base URL — no trailing slash.
-         Dev (Android emulator → host localhost): http://10.0.2.2:8080
+         Dev (Android emulator → host localhost): http://10.0.2.2:8080 or http://192.168.0.128:8080
          Production: paste your Cloud Run URL, e.g. https://gervis-backend-xxxxxxxxxx-uc.a.run.app -->
-    <string name="backend_base_url">http://192.168.0.128:8080</string>
+    <string name="backend_base_url">https://gervis-backend-223350201590.us-central1.run.app</string>
 </resources>
