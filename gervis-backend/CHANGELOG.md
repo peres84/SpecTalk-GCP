@@ -62,6 +62,27 @@ pre-creation, troubleshooting section for every error encountered during deploym
 
 ---
 
+### [Phase 4.4] - Missing firebase.sdkAdminServiceAgent IAM role
+**Context:** FCM push notifications silently failing in production
+
+The `roles/firebase.sdkAdminServiceAgent` role was missing from the `gervis-backend`
+service account. This role is required for `firebase_admin.messaging.send()` to work —
+without it FCM calls fail silently (the notification service catches exceptions and returns
+`False`).
+
+Fix — run once, no redeploy needed (IAM takes effect in ~60 seconds):
+
+```powershell
+gcloud projects add-iam-policy-binding spectalk-488516 `
+  --member="serviceAccount:gervis-backend@spectalk-488516.iam.gserviceaccount.com" `
+  --role="roles/firebase.sdkAdminServiceAgent"
+```
+
+Also added to `docs/phase4-deployment.md` Step 4 so future deployments include it from
+the start.
+
+---
+
 ### [Phase 4.2] - Cloud Build IAM for Compute SA
 **Context:** Cloud Build permissions
 

@@ -134,6 +134,14 @@ gcloud projects add-iam-policy-binding $env:PROJECT_ID `
 gcloud projects add-iam-policy-binding $env:PROJECT_ID `
   --member="serviceAccount:gervis-backend@$env:PROJECT_ID.iam.gserviceaccount.com" `
   --role="roles/firebase.sdkAdminServiceAgent"
+
+# Verify all roles were applied
+gcloud projects get-iam-policy $env:PROJECT_ID `
+  --flatten="bindings[].members" `
+  --format="table(bindings.role,bindings.members)" `
+  --filter="bindings.members:gervis-backend"
+# Expected roles: secretmanager.secretAccessor, cloudtasks.enqueuer,
+#                 cloudtrace.agent, firebase.sdkAdminServiceAgent, run.invoker
 ```
 
 #### Step 5 — Grant Cloud Build permissions
