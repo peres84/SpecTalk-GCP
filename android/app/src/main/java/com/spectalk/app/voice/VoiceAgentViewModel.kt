@@ -44,6 +44,10 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     private var connectTimeoutJob: Job? = null
     private var inactivityJob: Job? = null
 
+    // Tracks whether we've sent ack-resume-event for the current session.
+    // Reset on each new session so the ack fires exactly once per reconnect.
+    @Volatile private var resumeEventAcked = false
+
     private var audioRecorder: AndroidAudioRecorder? = null
     private var audioPlayer: PcmAudioPlayer? = null
 
@@ -76,6 +80,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         // subsequent call to startSession() on the main thread sees the flag immediately
         // and returns early — prevents two WebSocket connections if startSession() is
         // called twice before the coroutine runs.
+        resumeEventAcked = false
         _uiState.update { it.copy(isConnecting = true) }
 
         viewModelScope.launch {
@@ -224,6 +229,20 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                     state.copy(turns = upsertTurn(state.turns, "assistant", event.text))
                 }
                 resetInactivityTimer()
+                // Ack any pending resume events after Gervis delivers its first spoken
+                // output (the welcome-back message). The endpoint is idempotent so calling
+                // it when there are no pending events is safe.
+                val convId = _uiState.value.conversationId
+                if (!resumeEventAcked && convId != null) {
+                    resumeEventAcked = true
+                    viewModelScope.launch {
+                        val jwt = getProductJwt()
+                        if (jwt.isNotBlank()) {
+                            runCatching { conversationRepository.ackResumeEvent(jwt, convId) }
+                                .onFailure { e -> Log.w(TAG, "ack-resume-event failed: ${e.message}") }
+                        }
+                    }
+                }
             }
 
             is VoiceClientEvent.StateUpdate -> {

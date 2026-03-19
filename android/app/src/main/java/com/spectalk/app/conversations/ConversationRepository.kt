@@ -90,6 +90,21 @@ class ConversationRepository(private val http: OkHttpClient = defaultClient) {
         }
 
     /**
+     * Acknowledge all pending resume events for a conversation.
+     * Called after Gervis delivers the welcome-back message so the badge clears.
+     * The endpoint is idempotent — safe to call even if there are no pending events.
+     */
+    suspend fun ackResumeEvent(jwt: String, conversationId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("${BackendConfig.baseUrl}/conversations/$conversationId/ack-resume-event")
+                .post("{}".toRequestBody("application/json".toMediaType()))
+                .header("Authorization", "Bearer $jwt")
+                .build()
+            runCatching { http.newCall(request).execute().code in 200..299 }.getOrDefault(false)
+        }
+
+    /**
      * Fetch turn history for a conversation, oldest-first (natural chat order).
      * Returns an empty list on any error so callers can proceed without history.
      */

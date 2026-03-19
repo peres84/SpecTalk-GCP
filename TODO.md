@@ -293,7 +293,7 @@ WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `
 ---
 
 ## Phase 4 — Jobs, Notifications, and Resume Flow
-**Status: `🔄 IN PROGRESS — Cloud Tasks working, resume flow working, FCM push token debug pending`**
+**Status: `🔄 IN PROGRESS — Cloud Tasks ✅, FCM ✅, Android notification wiring pending`**
 
 Goal: Background jobs run via Cloud Tasks. Push notifications via FCM. User can leave, get
 notified when work completes, and resume naturally.
@@ -339,27 +339,28 @@ notified when work completes, and resume naturally.
 - [x] `strings.xml` — `backend_base_url` updated to Cloud Run HTTPS URL
 - [x] `TokenRepository` — proactive FCM push token registration on every login (fixes token never reaching backend on existing installs)
 - [x] `VoiceAgentViewModel` — gate mic chunks on `hasPendingAudio` to fix echo (Gervis hearing its own voice)
-- [ ] `BackendVoiceClient` — handle `job_started` control message → show job indicator
-- [ ] `BackendVoiceClient` — handle `job_update` control message → update/dismiss indicator
-- [ ] FCM notification handler — tap opens matching conversation
-- [ ] On conversation open after notification → connect WebSocket → Gemini speaks welcome-back
-- [ ] Call `POST /conversations/{id}/ack-resume-event` after welcome-back message plays
-- [ ] Conversation list — show badge from `pending_resume_count`
+- [x] `BackendVoiceClient` — handles `job_started` / `job_update` control messages (already implemented in Phase 1)
+- [x] `FcmService.onMessageReceived` — shows tappable notification with `PendingIntent` to open conversation
+- [x] `NotificationEventBus` — singleton SharedFlow bridges FCM tap → NavGraph navigation
+- [x] `MainActivity` — `launchMode="singleTop"`, handles `EXTRA_CONVERSATION_ID` in `onCreate` + `onNewIntent`
+- [x] `SpecTalkNavGraph` — collects `NotificationEventBus` and navigates to `VoiceSessionScreen`
+- [x] `ConversationRepository.ackResumeEvent` — `POST /conversations/{id}/ack-resume-event`
+- [x] `VoiceAgentViewModel` — calls `ackResumeEvent` after first `OutputTranscript` per session
+- [ ] Conversation list — show badge from `pending_resume_count` (field is fetched; UI badge not yet rendered)
 
 ### Acceptance Criteria
 
 - [x] Say "research X" → Gemini calls `start_background_job` → spoken ack → job row in DB
 - [x] Cloud Tasks automatically calls `/internal/jobs/execute` → job completes ✅
-- [x] FCM notification arrives on device (confirmed via manual curl)
+- [x] FCM notification arrives on device (confirmed via curl simulating Cloud Tasks ✅)
 - [x] Gemini speaks welcome-back message on reconnect using resume event data ✅
-- [ ] FCM notification arrives automatically after Cloud Tasks job (push_token null — debug pending)
-- [ ] Tapping notification opens the right conversation (Android not yet wired)
-- [ ] Conversation list shows badge, clears after `ack-resume-event`
+- [x] FCM notification arrives from job execution (push token found in DB, notification confirmed received)
+- [x] Tapping notification opens the right conversation (NotificationEventBus + NavGraph wired)
+- [ ] Conversation list badge rendered in UI (data already fetched, chip display pending)
 - [ ] Cross-session conversation history (agent starts fresh each reconnect — Phase 6)
 
 ### Known limitations
 - Agent has no memory across sessions (InMemoryRunner resets on Cloud Run restart/scale-to-zero)
-- FCM auto-notification not yet confirmed end-to-end (push_token lookup returning null in Cloud Task context)
 
 ### ⏸ Awaiting FCM end-to-end + Android notification wiring before approval to proceed to Phase 5
 

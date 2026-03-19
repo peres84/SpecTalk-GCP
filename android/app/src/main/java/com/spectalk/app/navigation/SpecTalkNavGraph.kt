@@ -1,6 +1,7 @@
 package com.spectalk.app.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -10,6 +11,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.spectalk.app.auth.AuthViewModel
+import com.spectalk.app.notifications.NotificationEventBus
 import com.spectalk.app.ui.screens.HomeScreen
 import com.spectalk.app.ui.screens.LoginScreen
 import com.spectalk.app.ui.screens.RegisterScreen
@@ -22,6 +24,15 @@ fun SpecTalkNavGraph() {
     val navController = rememberNavController()
     val authViewModel: AuthViewModel = viewModel()
     val authState by authViewModel.state.collectAsStateWithLifecycle()
+
+    // Navigate to the right conversation when user taps an FCM notification
+    LaunchedEffect(Unit) {
+        NotificationEventBus.pendingConversationId.collect { conversationId ->
+            navController.navigate(Screen.VoiceSession.routeWith(conversationId)) {
+                popUpTo(Screen.Home.route)
+            }
+        }
+    }
 
     NavHost(navController = navController, startDestination = Screen.Splash.route) {
         composable(Screen.Splash.route) {
