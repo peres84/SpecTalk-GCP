@@ -1,4 +1,4 @@
-"""Observability using OpenTelemetry + Google Cloud Trace.
+"""Observability using OpenTelemetry + Google Cloud Trace, and Opik (Comet ML).
 
 Auto-enabled in production when GCP_PROJECT env var is set (Cloud Run service account
 needs roles/cloudtrace.agent — no API key required).
@@ -10,7 +10,8 @@ Controlled by ENABLE_TRACING env var:
   ENABLE_TRACING=off     — disable completely
   unset                  — cloud if GCP_PROJECT is set, otherwise off
 
-No OPIK_API_KEY or external credentials needed. Cloud Run ADC handles Cloud Trace auth.
+Opik is enabled independently when OPIK_API_KEY is set.
+Opik stores full turn text (unlike OTel which only stores metadata).
 """
 
 import functools
@@ -21,6 +22,8 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 _tracer = None  # opentelemetry.trace.Tracer | None
+_opik_client = None  # opik.Opik | None — module-level singleton (avoids re-init per turn)
+_active_traces: dict[str, Any] = {}  # conversation_id → opik.Trace
 
 
 def setup_tracing() -> None:
@@ -32,59 +35,130 @@ def setup_tracing() -> None:
     if not mode:
         if os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT"):
             mode = "cloud"
-        else:
-            return  # development default: tracing off
 
-    if mode == "off":
-        return
+    if mode and mode != "off":
+        if mode == "cloud":
+            project_id = os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+            logger.info(f"Cloud Trace setup: ENABLE_TRACING={mode!r} GCP_PROJECT={project_id!r}")
+            if not project_id:
+                logger.error(
+                    "ENABLE_TRACING=cloud but GCP_PROJECT is not set — tracing disabled"
+                )
+            else:
+                try:
+                    from opentelemetry import trace
+                    from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter  # type: ignore[import]
+                    from opentelemetry.sdk.trace import TracerProvider
+                    from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-    if mode == "cloud":
-        project_id = os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
-        logger.info(f"Cloud Trace setup: ENABLE_TRACING={mode!r} GCP_PROJECT={project_id!r}")
-        if not project_id:
-            logger.error(
-                "ENABLE_TRACING=cloud but GCP_PROJECT is not set — tracing disabled"
-            )
-            return
-        try:
+                    provider = TracerProvider()
+                    provider.add_span_processor(
+                        BatchSpanProcessor(CloudTraceSpanExporter(project_id=project_id))
+                    )
+                    trace.set_tracer_provider(provider)
+                    _tracer = trace.get_tracer("gervis-backend")
+                    logger.info(f"Cloud Trace enabled (project={project_id})")
+                except ImportError:
+                    logger.error(
+                        "opentelemetry-exporter-gcp-trace not installed — tracing disabled. "
+                        "Run: uv add opentelemetry-exporter-gcp-trace"
+                    )
+
+        elif mode == "console":
             from opentelemetry import trace
-            from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter  # type: ignore[import]
             from opentelemetry.sdk.trace import TracerProvider
-            from opentelemetry.sdk.trace.export import BatchSpanProcessor
+            from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
 
             provider = TracerProvider()
-            provider.add_span_processor(
-                BatchSpanProcessor(CloudTraceSpanExporter(project_id=project_id))
-            )
+            provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
             trace.set_tracer_provider(provider)
             _tracer = trace.get_tracer("gervis-backend")
-            logger.info(f"Cloud Trace enabled (project={project_id})")
-        except ImportError:
-            logger.error(
-                "opentelemetry-exporter-gcp-trace not installed — tracing disabled. "
-                "Run: uv add opentelemetry-exporter-gcp-trace"
+            logger.info("Tracing enabled → console (stdout)")
+
+        else:
+            logger.warning(
+                f"ENABLE_TRACING={mode!r} not recognised — use 'cloud', 'console', or 'off'"
             )
 
-    elif mode == "console":
-        from opentelemetry import trace
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+    # Opik is always initialised independently of OTel — just needs OPIK_API_KEY
+    _setup_opik()
 
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
-        trace.set_tracer_provider(provider)
-        _tracer = trace.get_tracer("gervis-backend")
-        logger.info("Tracing enabled → console (stdout)")
 
-    else:
-        logger.warning(
-            f"ENABLE_TRACING={mode!r} not recognised — use 'cloud', 'console', or 'off'"
+def _setup_opik() -> None:
+    global _opik_client
+    from config import settings
+    if not settings.opik_api_key:
+        return
+    try:
+        import opik
+        # Do NOT call opik.configure() — it's a CLI wizard, not a server API.
+        # Pass api_key, workspace, project_name directly to constructor.
+        _opik_client = opik.Opik(
+            api_key=settings.opik_api_key,
+            workspace=settings.opik_workspace,
+            project_name=settings.opik_project_name,
         )
+        logger.info(
+            f"Opik enabled (workspace={settings.opik_workspace}, project={settings.opik_project_name})"
+        )
+    except ImportError:
+        logger.error("opik not installed — run: uv add opik")
+    except Exception as e:
+        logger.error(f"Opik init failed: {e}")
 
 
 def get_tracer():
     """Return the configured OpenTelemetry Tracer, or None if tracing is disabled."""
     return _tracer
+
+
+def get_opik_client():
+    """Return the Opik client singleton, or None if Opik is not configured."""
+    return _opik_client
+
+
+def opik_session_start(conversation_id: str, user_id: str) -> None:
+    """Open an Opik trace for a voice session."""
+    client = get_opik_client()
+    if not client:
+        return
+    try:
+        trace = client.trace(
+            name="voice_session",
+            thread_id=conversation_id,
+            input={"user_id": user_id, "conversation_id": conversation_id},
+            metadata={"source": "gervis_voice"},
+        )
+        _active_traces[conversation_id] = trace
+    except Exception:
+        pass
+
+
+def opik_session_end(conversation_id: str) -> None:
+    """Close and flush the Opik trace for a voice session."""
+    trace = _active_traces.pop(conversation_id, None)
+    if trace:
+        try:
+            trace.end()
+        except Exception:
+            pass
+
+
+def record_voice_turn_opik(conversation_id: str, role: str, text: str) -> None:
+    """Add a voice turn span to the active Opik trace — stores full text (unlike OTel)."""
+    trace = _active_traces.get(conversation_id)
+    if not trace:
+        return
+    try:
+        trace.span(
+            name=f"voice_turn.{role}",
+            type="general",
+            input={"role": role},
+            output={"text": text},
+            metadata={"conversation_id": conversation_id},
+        )
+    except Exception:
+        pass
 
 
 def record_voice_turn(conversation_id: str, role: str, text: str) -> None:

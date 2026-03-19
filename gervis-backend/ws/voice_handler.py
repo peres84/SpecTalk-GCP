@@ -46,7 +46,7 @@ from services.conversation_service import (
 from services.gemini_live_client import gemini_live_client
 import services.location_channels as location_channels
 import services.control_channels as control_channels
-from services.tracing import record_voice_turn
+from services.tracing import record_voice_turn, opik_session_start, opik_session_end, record_voice_turn_opik
 from services.location_context_service import (
     normalize_location_context,
     set_conversation_location_context,
@@ -55,6 +55,7 @@ from services.resume_event_service import (
     get_pending_resume_events,
     acknowledge_all_resume_events,
 )
+from services.session_logger import log_adk_event, log_session_start, log_session_end
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,9 @@ async def _downstream_task(
             if websocket.client_state != WebSocketState.CONNECTED:
                 break
 
+            # Structured session log — tool calls, transcripts, turn markers
+            log_adk_event(conversation_id, event)
+
             if event.interrupted:
                 await websocket.send_text(json.dumps({"type": "interrupted"}))
                 logger.debug(f"[{conversation_id}] interrupted forwarded to phone")
@@ -164,6 +168,7 @@ async def _downstream_task(
                                 persist_turn(conversation_id, "user", part.text, "voice_transcript")
                             )
                             record_voice_turn(conversation_id, "user", part.text)
+                            record_voice_turn_opik(conversation_id, "user", part.text)
 
                     elif event.content.role == "model":
                         await websocket.send_text(json.dumps({
@@ -176,6 +181,7 @@ async def _downstream_task(
                                 persist_turn(conversation_id, "assistant", part.text, "voice_transcript")
                             )
                             record_voice_turn(conversation_id, "assistant", part.text)
+                            record_voice_turn_opik(conversation_id, "assistant", part.text)
 
                 elif part.inline_data and part.inline_data.mime_type.startswith("audio/pcm"):
                     await websocket.send_bytes(part.inline_data.data)
@@ -207,6 +213,8 @@ async def voice_websocket(
 
     user_id = payload["sub"]
     logger.info(f"[{conversation_id}] WebSocket connecting for user={user_id}")
+    log_session_start(conversation_id, user_id)
+    opik_session_start(conversation_id, user_id)
 
     await websocket.accept()
 
@@ -304,6 +312,8 @@ async def voice_websocket(
         downstream.cancel()
         live_request_queue.close()
 
+        log_session_end(conversation_id)
+        opik_session_end(conversation_id)
         logger.info(f"[{conversation_id}] Phone disconnected, starting grace timer")
         location_channels.unregister(conversation_id)
         control_channels.unregister(conversation_id)

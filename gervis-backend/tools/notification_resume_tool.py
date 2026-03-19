@@ -11,13 +11,15 @@ import asyncio
 import logging
 from typing import Any
 
+import opik
 from google.adk.tools import ToolContext
-from services.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
 
-@trace_span("start_background_job")
+@opik.track(name="start_background_job", project_name="gervis",
+            capture_input=True, capture_output=True,
+            ignore_arguments=["tool_context"])
 async def start_background_job(
     job_type: str,
     description: str,

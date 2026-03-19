@@ -11,9 +11,9 @@ import asyncio
 import logging
 from typing import Any
 
+import opik
 import services.location_channels as location_channels
 from google.adk.tools import ToolContext
-from services.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,9 @@ def _resolve_location(location: str, tool_context: ToolContext | None) -> tuple[
     return normalized, True
 
 
-@trace_span("find_nearby_places")
+@opik.track(name="find_nearby_places", project_name="gervis",
+            capture_input=True, capture_output=True,
+            ignore_arguments=["tool_context"])
 async def find_nearby_places(
     query: str,
     location: str,

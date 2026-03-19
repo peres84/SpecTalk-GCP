@@ -50,5 +50,10 @@ class Settings(BaseSettings):
     # Cloud Run service account email for OIDC token auth on Cloud Tasks callbacks
     cloud_run_service_account: str = ""
 
+    # Opik (Comet ML) — optional agent observability. Set OPIK_API_KEY to enable.
+    opik_api_key: str = ""
+    opik_workspace: str = "javier-peres"
+    opik_project_name: str = "gervis"
+
 
 settings = Settings()

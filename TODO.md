@@ -405,6 +405,14 @@ clarifying questions, requests confirmation, and dispatches to OpenClaw as a bac
       - Fix: removed `playWakeBeep()` from `HotwordService`; moved + fixed
         `playActivationSound()` to `VoiceClientEvent.Connected` handler in ViewModel
       - Files: `HotwordService.kt`, `VoiceAgentViewModel.kt`
+- [x] **Opik observability re-integrated** — `services/tracing.py`, `ws/voice_handler.py`, all tool files
+      - Module-level `opik.Opik` singleton (fixes prior bug: re-instantiated per turn)
+      - `opik.Opik(api_key=..., workspace=..., project_name=...)` — no `opik.configure()` call (fixes prior CLI-wizard bug)
+      - Session traces keyed by `thread_id=conversation_id`; full turn text stored per span (unlike OTel)
+      - `@opik.track` added to all tools: `get_user_location`, `find_nearby_places`, `start_background_job`, `request_clarification`, `generate_and_confirm_prd`, `confirm_and_dispatch`
+      - Enabled independently of OTel — just set `OPIK_API_KEY` in `.env`
+      - `config.py`: `opik_api_key`, `opik_workspace`, `opik_project_name` settings
+      - `cloudbuild.yaml`: `OPIK_API_KEY` secret + `OPIK_WORKSPACE`/`OPIK_PROJECT_NAME` env vars
 - [ ] Test full coding mode lifecycle: voice request → questions → PRD → confirm → job → notify → resume
 
 ### Acceptance Criteria

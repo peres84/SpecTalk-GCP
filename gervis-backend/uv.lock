@@ -281,15 +281,15 @@ wheels = [
 
 [[package]]
 name = "boto3-stubs"
-version = "1.42.70"
+version = "1.42.72"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore-stubs" },
     { name = "types-s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1b/df/58083ab60ea3dd57d2755e260b4bef4d5a121812e7627a93d4356be5e519/boto3_stubs-1.42.70.tar.gz", hash = "sha256:9e36a01c08169906be846105c14e2dd8907bef5a6b04151dffaab5aff13895b9", size = 101355, upload-time = "2026-03-17T20:05:24.247Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/09/90a781644ed2d66f07dafcd2aef7927e9b186e460a4c0340b87466889238/boto3_stubs-1.42.72.tar.gz", hash = "sha256:41fc40b5eebd42acc449764931aae6cbd4543efd3817b1b4fa60b41f5449d4b6", size = 101379, upload-time = "2026-03-19T21:30:40.793Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/cb/95e477bf3a20f292c8768c33204b882ec636c00d3d217f481961f5afa700/boto3_stubs-1.42.70-py3-none-any.whl", hash = "sha256:823dc17af74427a2220f9da3007285145a21b44bbf149af7ed01eb7697fd5cac", size = 70011, upload-time = "2026-03-17T20:05:16.998Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/fe/49b866b925e1199bcad3df91ed8c59f1965ffa48150221f93bdbef4564b5/boto3_stubs-1.42.72-py3-none-any.whl", hash = "sha256:c244887967a5cef751ca23a2adeeca9ead6ad85edd79513bce088bb89a33b373", size = 70009, upload-time = "2026-03-19T21:30:32.461Z" },
 ]
 
 [package.optional-dependencies]
@@ -789,8 +789,9 @@ dependencies = [
     { name = "fastapi" },
     { name = "firebase-admin" },
     { name = "google-adk" },
+    { name = "google-cloud-tasks" },
     { name = "httpx" },
-    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-exporter-gcp-trace" },
     { name = "opentelemetry-sdk" },
     { name = "opik" },
     { name = "passlib", extra = ["bcrypt"] },
@@ -819,10 +820,11 @@ requires-dist = [
     { name = "fastapi", specifier = "==0.115.5" },
     { name = "firebase-admin", specifier = "==6.6.0" },
     { name = "google-adk", specifier = ">=1.0.0" },
+    { name = "google-cloud-tasks", specifier = ">=2.16.0" },
     { name = "httpx", specifier = ">=0.27.2" },
-    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.40.0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
-    { name = "opik", specifier = ">=1.10.42" },
+    { name = "opentelemetry-exporter-gcp-trace", specifier = ">=1.9.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.7.0" },
+    { name = "opik", specifier = ">=1.10.0" },
     { name = "passlib", extras = ["bcrypt"], specifier = "==1.7.4" },
     { name = "psycopg2-binary", specifier = ">=2.9.11" },
     { name = "pydantic", specifier = "==2.10.2" },
@@ -1076,6 +1078,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/36/76/4d965702e96bb67976e755bed9828fa50306dca003dbee08b67f41dd265e/google_cloud_storage-2.19.0.tar.gz", hash = "sha256:cd05e9e7191ba6cb68934d8eb76054d9be4562aa89dbc4236feee4d7d51342b2", size = 5535488, upload-time = "2024-12-05T01:35:06.49Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d5/94/6db383d8ee1adf45dc6c73477152b82731fa4c4a46d9c1932cc8757e0fd4/google_cloud_storage-2.19.0-py2.py3-none-any.whl", hash = "sha256:aeb971b5c29cf8ab98445082cbfe7b161a1f48ed275822f59ed3f1524ea54fba", size = 131787, upload-time = "2024-12-05T01:35:04.736Z" },
+]
+
+[[package]]
+name = "google-cloud-tasks"
+version = "2.21.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpc-google-iam-v1" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b6/58/0238b71de170b92ef359e53047a3d6ff9618c04ee255cbc6def53ab79e11/google_cloud_tasks-2.21.0.tar.gz", hash = "sha256:d28f33248553faf0ff029e1981aab56cd13bd933635c3bc33aa187675e7e14d1", size = 351784, upload-time = "2026-01-15T13:04:43.071Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/9d/a7f098037fb56f1d69fbfad95f58bf322a4d0dbb6cafcf380c9535730cc0/google_cloud_tasks-2.21.0-py3-none-any.whl", hash = "sha256:4bf288876892a0afac30658fc42925ccb732d3c4433a8ea568de1d67fde738f2", size = 295211, upload-time = "2026-01-15T13:02:52.377Z" },
 ]
 
 [[package]]
@@ -1566,7 +1585,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.82.3"
+version = "1.82.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1582,9 +1601,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/53/00/13993312e6d2fb29cd6d5ffceb293455ef747fe5675eaa9aa49b09184656/litellm-1.82.3.tar.gz", hash = "sha256:7215b95e7cc38a52b5ae778d67e8829dec86594c8b05d8431294e95c7d59937c", size = 17368754, upload-time = "2026-03-16T21:51:30.356Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/79/b492be13542aebd62aafc0490e4d5d6e8e00ce54240bcabf5c3e46b1a49b/litellm-1.82.4.tar.gz", hash = "sha256:9c52b1c0762cb0593cdc97b26a8e05004e19b03f394ccd0f42fac82eff0d4980", size = 17378196, upload-time = "2026-03-18T01:18:05.378Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/3a/590d58dee65a238f7f3d5c37f8f9f9021ecaf27fe379a393b4259324b56e/litellm-1.82.3-py3-none-any.whl", hash = "sha256:609901f6c5a5cf8c24386e4e3f50738bb8a9db719709fd76b208c8ee6d00f7a7", size = 15551034, upload-time = "2026-03-16T21:51:26.747Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/ad/7eaa1121c6b191f2f5f2e8c7379823ece6ec83741a4b3c81b82fe2832401/litellm-1.82.4-py3-none-any.whl", hash = "sha256:d37c34a847e7952a146ed0e2888a24d3edec7787955c6826337395e755ad5c4b", size = 15559801, upload-time = "2026-03-18T01:18:02.026Z" },
 ]
 
 [[package]]
@@ -1905,48 +1924,6 @@ wheels = [
 ]
 
 [[package]]
-name = "opentelemetry-exporter-otlp-proto-common"
-version = "1.40.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-proto" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/51/bc/1559d46557fe6eca0b46c88d4c2676285f1f3be2e8d06bb5d15fbffc814a/opentelemetry_exporter_otlp_proto_common-1.40.0.tar.gz", hash = "sha256:1cbee86a4064790b362a86601ee7934f368b81cd4cc2f2e163902a6e7818a0fa", size = 20416, upload-time = "2026-03-04T14:17:23.801Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/ca/8f122055c97a932311a3f640273f084e738008933503d0c2563cd5d591fc/opentelemetry_exporter_otlp_proto_common-1.40.0-py3-none-any.whl", hash = "sha256:7081ff453835a82417bf38dccf122c827c3cbc94f2079b03bba02a3165f25149", size = 18369, upload-time = "2026-03-04T14:17:04.796Z" },
-]
-
-[[package]]
-name = "opentelemetry-exporter-otlp-proto-http"
-version = "1.40.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "googleapis-common-protos" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-exporter-otlp-proto-common" },
-    { name = "opentelemetry-proto" },
-    { name = "opentelemetry-sdk" },
-    { name = "requests" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2e/fa/73d50e2c15c56be4d000c98e24221d494674b0cc95524e2a8cb3856d95a4/opentelemetry_exporter_otlp_proto_http-1.40.0.tar.gz", hash = "sha256:db48f5e0f33217588bbc00274a31517ba830da576e59503507c839b38fa0869c", size = 17772, upload-time = "2026-03-04T14:17:25.324Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/3a/8865d6754e61c9fb170cdd530a124a53769ee5f740236064816eb0ca7301/opentelemetry_exporter_otlp_proto_http-1.40.0-py3-none-any.whl", hash = "sha256:a8d1dab28f504c5d96577d6509f80a8150e44e8f45f82cdbe0e34c99ab040069", size = 19960, upload-time = "2026-03-04T14:17:07.153Z" },
-]
-
-[[package]]
-name = "opentelemetry-proto"
-version = "1.40.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "protobuf" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4c/77/dd38991db037fdfce45849491cb61de5ab000f49824a00230afb112a4392/opentelemetry_proto-1.40.0.tar.gz", hash = "sha256:03f639ca129ba513f5819810f5b1f42bcb371391405d99c168fe6937c62febcd", size = 45667, upload-time = "2026-03-04T14:17:31.194Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b9/b2/189b2577dde745b15625b3214302605b1353436219d42b7912e77fa8dc24/opentelemetry_proto-1.40.0-py3-none-any.whl", hash = "sha256:266c4385d88923a23d63e353e9761af0f47a6ed0d486979777fe4de59dc9b25f", size = 72073, upload-time = "2026-03-04T14:17:16.673Z" },
-]
-
-[[package]]
 name = "opentelemetry-resourcedetector-gcp"
 version = "1.11.0a0"
 source = { registry = "https://pypi.org/simple" }
@@ -1990,7 +1967,7 @@ wheels = [
 
 [[package]]
 name = "opik"
-version = "1.10.42"
+version = "1.10.44"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3-stubs", extra = ["bedrock-runtime"] },
@@ -2009,9 +1986,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "uuid6" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2b/c5/31af85a4a3d099521d170151d9c7a259a29eb2c80b58c134d09160e5de5e/opik-1.10.42.tar.gz", hash = "sha256:de9d2241b5df7118944d2db51678f6bd250f8b1569cc3a62ed91ecac572d20f6", size = 777840, upload-time = "2026-03-17T14:24:34.807Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9a/7e/b7266054ff68d6593ef342e34b0207d6cc7e6e2aec674807fd19f9f97d8e/opik-1.10.44.tar.gz", hash = "sha256:d03963276489464bf88abe4faf54c635439694e1542369c00a868662f9015e45", size = 787576, upload-time = "2026-03-19T15:12:14.672Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/07/76/efcf8932d1af9fc8842b746ccd6f806a151eab3f3ae8ddb755cc9d2e6fa4/opik-1.10.42-py3-none-any.whl", hash = "sha256:e3840032a27e5526019637e59de39ce63387043b6b3344678169f126ae1bc991", size = 1316063, upload-time = "2026-03-17T14:24:33.103Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/1f/dcdabc72498bbd27ff678d02933a76efe4407b8277bfa22db9e187d52057/opik-1.10.44-py3-none-any.whl", hash = "sha256:0b98597d9f74f02f8f41137b3bb403f30b89f43e83c494e1708d0d58fce53bf3", size = 1331790, upload-time = "2026-03-19T15:12:12.857Z" },
 ]
 
 [[package]]

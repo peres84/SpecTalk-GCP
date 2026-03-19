@@ -5,6 +5,236 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+## Phase 5 - Coding Mode and OpenClaw Integration
+> Status: **In Progress** — PRD workflow + mock coding job implemented
+
+---
+
+### [Phase 5.1] - Opik (Comet ML) observability re-integrated
+
+**Modified files:** `services/tracing.py`, `ws/voice_handler.py`, `config.py`,
+`tools/location_tool.py`, `tools/maps_tool.py`, `tools/notification_resume_tool.py`,
+`tools/coding_tools.py`, `cloudbuild.yaml`, `.env.example`, `pyproject.toml`
+
+**Previous bugs fixed:**
+1. `opik.configure()` called with invalid `project_name` param — that call is removed entirely.
+   The client is now initialized via `opik.Opik(api_key=..., workspace=..., project_name=...)`.
+2. `opik.Opik()` re-instantiated on every voice turn — now a module-level singleton in `tracing.py`.
+
+#### `services/tracing.py` — Opik singleton + session-scoped trace helpers
+
+New module-level state:
+- `_opik_client` — `opik.Opik | None` singleton, initialized once in `_setup_opik()`.
+- `_active_traces` — `dict[conversation_id → opik.Trace]` for session-scoped spans.
+
+`_setup_opik()` is called unconditionally at the end of `setup_tracing()` — it runs even when OTel is off or not configured. Guarded by `OPIK_API_KEY`; no-op when the key is absent (graceful degradation).
+
+New public functions:
+
+| Function | Purpose |
+|----------|---------|
+| `get_opik_client()` | Returns singleton or `None` |
+| `opik_session_start(conversation_id, user_id)` | Opens `opik.Trace(thread_id=conversation_id)` |
+| `opik_session_end(conversation_id)` | Calls `trace.end()` and removes from `_active_traces` |
+| `record_voice_turn_opik(conversation_id, role, text)` | Adds `trace.span(output={"text": text})` — stores **full text** unlike OTel which only stores `text_length` |
+
+#### `ws/voice_handler.py` — session lifecycle hooks + per-turn Opik spans
+
+- `opik_session_start(conversation_id, user_id)` called after `log_session_start`.
+- `record_voice_turn_opik(...)` called alongside each `record_voice_turn(...)` in `_downstream_task`.
+- `opik_session_end(conversation_id)` called alongside `log_session_end` in `finally`.
+
+#### Tool files — `@opik.track` replaces `@trace_span`
+
+All tool functions now use `@opik.track` with `ignore_arguments=["tool_context"]` to prevent ADK's `ToolContext` (non-serialisable) from causing capture errors.
+
+| File | Function | Tool name in Opik |
+|------|----------|-------------------|
+| `tools/location_tool.py` | `get_user_location` | `"get_user_location"` |
+| `tools/maps_tool.py` | `find_nearby_places` | `"find_nearby_places"` |
+| `tools/notification_resume_tool.py` | `start_background_job` | `"start_background_job"` |
+| `tools/coding_tools.py` | `request_clarification` | `"request_clarification"` |
+| `tools/coding_tools.py` | `generate_and_confirm_prd` | `"generate_and_confirm_prd"` |
+| `tools/coding_tools.py` | `confirm_and_dispatch` | `"confirm_and_dispatch"` |
+
+#### `config.py` — three new Opik settings
+
+```python
+opik_api_key: str = ""          # Set via OPIK_API_KEY env var to enable
+opik_workspace: str = "javier-peres"
+opik_project_name: str = "gervis"
+```
+
+#### `cloudbuild.yaml` — production secret + env vars
+
+- `--set-secrets`: added `OPIK_API_KEY=OPIK_API_KEY:latest`
+- `--set-env-vars`: added `OPIK_WORKSPACE=javier-peres,OPIK_PROJECT_NAME=gervis`
+
+Before first deploy: `echo -n "key" | gcloud secrets create OPIK_API_KEY --data-file=-`
+
+#### `.env.example` — fixed stale variable name
+
+- `ENABLE_ADK_TRACING` → `ENABLE_TRACING` (matches current `config.py`)
+- `OPIK_WORKSPACE` default updated to `javier-peres`
+
+#### What Opik captures per session
+
+All items grouped under `thread_id=conversation_id` for full conversation replay in Opik UI:
+
+| Event | Captured |
+|-------|----------|
+| Session open | `user_id`, `conversation_id`, `thread_id` |
+| User speech turn | Full transcript text |
+| Model (Gervis) speech turn | Full transcript text |
+| `get_user_location` | GPS result dict |
+| `find_nearby_places` | query, location, result |
+| `start_background_job` | `job_type`, `description`, `spoken_ack` |
+| `request_clarification` | question text |
+| `generate_and_confirm_prd` | `project_idea`, PRD dict |
+| `confirm_and_dispatch` | `confirmed`, `change_request` |
+| Session close | `trace.end()` |
+
+---
+
+### [Phase 5.0] - Coding mode: clarifications → PRD → confirmation → coding job
+**New files:** `agents/team_code_pr_designers/__init__.py`,
+`agents/team_code_pr_designers/designer_agent.py`, `tools/coding_tools.py`,
+`tools/openclaw_coding_tool.py`
+
+**Modified files:** `agents/orchestrator.py`, `api/conversations.py`,
+`api/internal/jobs.py`, `db/models.py`,
+`migrations/versions/b7e2d4f1c8a3_phase5_pending_action_fields.py`
+
+---
+
+#### `db/models.py` + migration `b7e2d4f1c8a3` — PendingAction fields added
+
+Added three columns to `pending_actions` (the model already existed from Phase 2):
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `action_type` | VARCHAR(64) nullable | e.g. `"confirm_prd"` |
+| `payload` | JSONB nullable | Stores the generated PRD dict |
+| `status` | VARCHAR(32) NOT NULL default `"pending"` | `pending` \| `resolved` \| `cancelled` |
+
+Existing columns (`description`, `confirmation_prompt`, `resolved_at`, `resolution`)
+are kept for backward compatibility.
+
+---
+
+#### `agents/team_code_pr_designers/designer_agent.py` — PRD Shaper
+
+Single async function `generate_prd(project_idea, clarifications) -> dict`.
+
+- Uses `google.genai` Client with **Google Search grounding** (`genai_types.Tool(google_search=...)`)
+  so tech stack recommendations reflect current ecosystem (Vite vs CRA, TanStack vs SWR, etc.)
+- Runs the synchronous Gemini call in `asyncio.to_thread()` to stay non-blocking
+- Strips markdown code blocks from the response before JSON parsing
+- Fallback `_fallback_prd()` returns a sensible default if parsing fails — never crashes
+- Model: `gemini-2.0-flash` (stable text model, separate from the audio preview used for voice)
+
+Returns:
+```json
+{
+  "project_name": "TaskFlow",
+  "description": "2-3 sentences...",
+  "target_platform": "web | mobile | backend | fullstack",
+  "key_features": ["...", "...", "...", "...", "..."],
+  "tech_stack": "React 19 + Vite + FastAPI + PostgreSQL",
+  "scope_estimate": "small | medium | large"
+}
+```
+
+---
+
+#### `tools/coding_tools.py` — three new ADK tools
+
+**`request_clarification(question, tool_context)`**
+- Increments `tool_context.state["clarification_count"]` (tracks max 3 questions)
+- Stores question in `tool_context.state["pending_clarification"]`
+- On first call (count == 0): sends `{"type":"state_update","state":"coding_mode"}` to phone
+  and sets conversation state → `coding_mode`
+- Returns the question string for Gervis to speak
+
+**`generate_and_confirm_prd(project_idea, clarifications_json, tool_context)`**
+- Parses `clarifications_json` (JSON string) into a dict
+- Calls `generate_prd()` (Gemini + Search grounding)
+- Stores PRD in `tool_context.state["pending_prd"]`
+- Sends `state_update: awaiting_confirmation` control message with full `prd_summary`
+- Persists a `PendingAction` row (`action_type="confirm_prd"`, `status="pending"`)
+- Sets conversation state → `awaiting_confirmation`
+- Returns a 2-3 sentence spoken PRD summary for Gervis to voice
+
+**`confirm_and_dispatch(confirmed, change_request, tool_context)`**
+- If `confirmed=True`:
+  - Updates `PendingAction.status = "resolved"`
+  - Creates `Job` row (`job_type="coding"`)
+  - Enqueues Cloud Tasks task with `payload={"prd": prd_dict}`
+  - Sends `state_update: running_job` + `job_started` control messages
+  - Sets conversation state → `running_job`
+- If `confirmed=False`:
+  - Updates `PendingAction.status = "cancelled"`
+  - Clears `pending_prd` from session state, resets `clarification_count`
+  - Sends `state_update: idle` control message
+  - Returns instruction to ask what the user wants changed
+
+---
+
+#### `tools/openclaw_coding_tool.py` — coding job executor (mock)
+
+`execute_coding_job(job_id, conversation_id, payload) -> dict`
+
+Current implementation: realistic mock — `asyncio.sleep(8)` then returns a GitHub repo URL
+derived from `prd["project_name"]`. Ready to be replaced with the real
+`POST {OPENCLAW_BASE_URL}/hooks/agent` call (see `docs/phase5-openclaw-integration.md`).
+
+---
+
+#### `api/internal/jobs.py` — coding job wired
+
+Added to `_execute_job_by_type()`:
+```python
+elif job_type == "coding":
+    from tools.openclaw_coding_tool import execute_coding_job
+    return await execute_coding_job(job_id, conversation_id, payload)
+```
+
+---
+
+#### `api/conversations.py` — `POST /{id}/confirm`
+
+New out-of-voice confirmation endpoint for users who return to the app to confirm a PRD.
+
+**Request:** `POST /conversations/{id}/confirm`
+- Auth: Bearer JWT
+- Body: `{"confirmed": true}` or `{"confirmed": false, "change_request": "make it mobile"}`
+
+**Logic:**
+1. Verify user owns the conversation
+2. Fetch most recent `PendingAction` where `action_type="confirm_prd"` and `status="pending"`
+3. If `confirmed=true`: create Job row + enqueue Cloud Tasks + resolve PendingAction
+   + set conversation to `running_job` + send `state_update` and `job_started` control messages
+4. If `confirmed=false`: cancel PendingAction + set conversation to `idle`
+   + send `state_update: idle` control message
+
+**Response:** `{"status": "ok"}` (+ `"job_id"` when confirmed)
+
+---
+
+#### `agents/orchestrator.py` — Coding mode system instruction + new tools registered
+
+- Appended **Coding mode — CRITICAL RULES** section to `GERVIS_INSTRUCTION`:
+  - Triggers on: "build", "create", "make", "code" anything
+  - Step 1: `request_clarification` up to 3 times (one question per call)
+  - Step 2: `generate_and_confirm_prd` — always call before dispatching
+  - Step 3: Speak PRD summary, wait for user
+  - Step 4: `confirm_and_dispatch` on yes/no
+  - Coding requests must NOT use `start_background_job` directly — use coding mode flow
+- Registered `request_clarification`, `generate_and_confirm_prd`, `confirm_and_dispatch`
+  in `create_gervis_agent()` tools list (total: 7 tools)
+
+---
+
 ## Phase 4 - Jobs, Notifications, and Resume Flow
 > Status: **Deployed** — running on Cloud Run (spectalk-488516, us-central1)
 

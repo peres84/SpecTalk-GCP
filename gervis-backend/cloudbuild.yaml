@@ -53,8 +53,8 @@ steps:
       - '--min-instances=1'
       - '--memory=1Gi'
       - '--timeout=3600'
-      - '--set-secrets=JWT_SECRET=JWT_SECRET:latest,DATABASE_URL=DATABASE_URL:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,FIREBASE_SERVICE_ACCOUNT_JSON=FIREBASE_SERVICE_ACCOUNT_JSON:latest,BACKEND_BASE_URL=BACKEND_BASE_URL:latest'
-      - '--set-env-vars=ENVIRONMENT=production,GCP_PROJECT=${PROJECT_ID},CLOUD_TASKS_QUEUE=backend-jobs,CLOUD_TASKS_LOCATION=${_REGION},CLOUD_RUN_SERVICE_ACCOUNT=gervis-backend@${PROJECT_ID}.iam.gserviceaccount.com,ENABLE_TRACING=cloud'
+      - '--set-secrets=JWT_SECRET=JWT_SECRET:latest,DATABASE_URL=DATABASE_URL:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,FIREBASE_SERVICE_ACCOUNT_JSON=FIREBASE_SERVICE_ACCOUNT_JSON:latest,BACKEND_BASE_URL=BACKEND_BASE_URL:latest,OPIK_API_KEY=OPIK_API_KEY:latest'
+      - '--set-env-vars=ENVIRONMENT=production,GCP_PROJECT=${PROJECT_ID},CLOUD_TASKS_QUEUE=backend-jobs,CLOUD_TASKS_LOCATION=${_REGION},CLOUD_RUN_SERVICE_ACCOUNT=gervis-backend@${PROJECT_ID}.iam.gserviceaccount.com,ENABLE_TRACING=cloud,OPIK_WORKSPACE=javier-peres,OPIK_PROJECT_NAME=gervis'
       - '--allow-unauthenticated'
 
 substitutions:
