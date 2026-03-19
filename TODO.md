@@ -80,7 +80,7 @@ Reference for UI patterns: `samples/gemini-voice-agent/`
 ---
 
 ## Phase 1 — Android App: Voice Session UI
-**Status: `🔄 IN PROGRESS`**
+**Status: `✅ APPROVED`**
 
 Goal: Full voice session UI connected to a local mock backend (or still directly to Gemini
 as a temporary bridge). Wake-word detection, animated listening state, transcript display,
@@ -150,7 +150,7 @@ Reference for all UI and audio components: `samples/gemini-voice-agent/`
 - BT headset (AirPods or Meta glasses audio) routes correctly
 - App handles disconnect and reconnects cleanly
 
-### ⏸ Awaiting approval to proceed to Phase 2
+### ✅ Approved — proceeding to Phase 2
 
 ---
 
@@ -293,7 +293,7 @@ WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `
 ---
 
 ## Phase 4 — Jobs, Notifications, and Resume Flow
-**Status: `🔄 IN PROGRESS — Cloud Tasks ✅, FCM ✅, Android notification wiring pending`**
+**Status: `✅ APPROVED`**
 
 Goal: Background jobs run via Cloud Tasks. Push notifications via FCM. User can leave, get
 notified when work completes, and resume naturally.
@@ -335,7 +335,7 @@ notified when work completes, and resume naturally.
 - [x] Backend deployed to Cloud Run (`gervis-backend` service, us-central1, min 0 instances, 1Gi)
 - [x] `BACKEND_BASE_URL` secret filled in with Cloud Run URL
 - [x] Android app `backend_base_url` updated to Cloud Run HTTPS URL
-- [ ] Deploy latest fixes (FCM push_token logging + GEMINI_API_KEY removal) — pending `gcloud builds submit`
+- [x] Deploy latest fixes (smart live injection + FCM fallback) — deployed via `gcloud builds submit`
 
 ### Android Tasks (send to frontend agent)
 
@@ -349,7 +349,7 @@ notified when work completes, and resume naturally.
 - [x] `SpecTalkNavGraph` — collects `NotificationEventBus` and navigates to `VoiceSessionScreen`
 - [x] `ConversationRepository.ackResumeEvent` — `POST /conversations/{id}/ack-resume-event`
 - [x] `VoiceAgentViewModel` — calls `ackResumeEvent` after first `OutputTranscript` per session
-- [ ] Conversation list — show badge from `pending_resume_count` (field is fetched; UI badge not yet rendered)
+- [x] Conversation list — badge already rendered in `HomeScreen.kt` (lines 310-325, `pendingResumeCount > 0`)
 
 ### Acceptance Criteria
 
@@ -359,13 +359,13 @@ notified when work completes, and resume naturally.
 - [x] Gemini speaks welcome-back message on reconnect using resume event data ✅
 - [x] FCM notification arrives from job execution (push token found in DB, notification confirmed received)
 - [x] Tapping notification opens the right conversation (NotificationEventBus + NavGraph wired)
-- [ ] Conversation list badge rendered in UI (data already fetched, chip display pending)
+- [x] Conversation list badge rendered (confirmed already implemented in HomeScreen.kt)
 - [ ] Cross-session conversation history (agent starts fresh each reconnect — Phase 6)
 
 ### Known limitations
 - Agent has no memory across sessions (InMemoryRunner resets on Cloud Run restart/scale-to-zero)
 
-### ⏸ Awaiting FCM end-to-end + Android notification wiring before approval to proceed to Phase 5
+### ✅ Approved — proceeding to Phase 5
 
 ---
 
@@ -420,7 +420,7 @@ Goal: describe-image, long-term memory, artifact browser in app, richer multimod
 
 ### Acceptance Criteria
 
-- User sends 4 images, 3D model job runs, notification on complete, artifact viewable in app
+- User send and image to the model gemini and gemini describe 
 - Gervis remembers user preferences across separate conversations
 - Artifacts from coding jobs are browsable in the app
 
@@ -431,9 +431,9 @@ Goal: describe-image, long-term memory, artifact browser in app, richer multimod
 ## Completion Checklist
 
 - [x] Phase 0 approved
-- [ ] Phase 1 approved
+- [x] Phase 1 approved
 - [x] Phase 2 approved
 - [x] Phase 3 approved
-- [ ] Phase 4 approved
+- [x] Phase 4 approved
 - [ ] Phase 5 approved
 - [ ] Phase 6 approved
