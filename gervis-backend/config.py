@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -12,6 +13,21 @@ class Settings(BaseSettings):
     jwt_expire_hours: int = 720  # 30 days
 
     database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/spectalk"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def fix_asyncpg_ssl(cls, v: str) -> str:
+        # Neon/psycopg2 URLs contain params asyncpg doesn't understand
+        # (sslmode, channel_binding, etc). Strip all query params and
+        # replace with just ssl=require if SSL was requested.
+        if not isinstance(v, str) or "?" not in v:
+            return v
+        base, query = v.split("?", 1)
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        ssl_mode = params.get("sslmode") or params.get("ssl", "")
+        if ssl_mode and ssl_mode != "disable":
+            return f"{base}?ssl=require"
+        return base
 
     environment: str = "development"
     allowed_origins: list[str] = ["http://localhost:3000"]

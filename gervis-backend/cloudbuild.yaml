@@ -17,7 +17,18 @@ steps:
       - '--all-tags'
       - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend'
 
-  # Run Alembic migrations as a Cloud Run Job before deploying new revision
+  # Update the migration job image to the newly built image
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - jobs
+      - update
+      - gervis-migrate
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend:${_IMAGE_TAG}'
+      - '--region=${_REGION}'
+
+  # Execute Alembic migrations and wait for completion
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -26,11 +37,7 @@ steps:
       - execute
       - gervis-migrate
       - '--region=${_REGION}'
-      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend:${_IMAGE_TAG}'
       - '--wait'
-    # Override container command to run Alembic instead of the app server
-    # The Cloud Run Job 'gervis-migrate' must be pre-created with:
-    #   --command="uv" --args="run,alembic,upgrade,head"
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -42,17 +49,17 @@ steps:
       - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/gervis-backend:${_IMAGE_TAG}'
       - '--region=${_REGION}'
       - '--platform=managed'
-      - '--service-account=${_SERVICE_ACCOUNT}'
+      - '--service-account=gervis-backend@${PROJECT_ID}.iam.gserviceaccount.com'
       - '--min-instances=1'
+      - '--memory=1Gi'
       - '--timeout=3600'
       - '--set-secrets=JWT_SECRET=JWT_SECRET:latest,DATABASE_URL=DATABASE_URL:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,FIREBASE_SERVICE_ACCOUNT_JSON=FIREBASE_SERVICE_ACCOUNT_JSON:latest,BACKEND_BASE_URL=BACKEND_BASE_URL:latest'
-      - '--set-env-vars=ENVIRONMENT=production,GCP_PROJECT=${PROJECT_ID},CLOUD_TASKS_QUEUE=backend-jobs,CLOUD_TASKS_LOCATION=${_REGION},CLOUD_RUN_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT},ENABLE_TRACING=cloud'
-      - '--no-allow-unauthenticated'
+      - '--set-env-vars=ENVIRONMENT=production,GCP_PROJECT=${PROJECT_ID},CLOUD_TASKS_QUEUE=backend-jobs,CLOUD_TASKS_LOCATION=${_REGION},CLOUD_RUN_SERVICE_ACCOUNT=gervis-backend@${PROJECT_ID}.iam.gserviceaccount.com,ENABLE_TRACING=cloud'
+      - '--allow-unauthenticated'
 
 substitutions:
   _REGION: us-central1
   _REPO: gervis
-  _SERVICE_ACCOUNT: gervis-backend@${PROJECT_ID}.iam.gserviceaccount.com
   _IMAGE_TAG: latest
 
 options:
