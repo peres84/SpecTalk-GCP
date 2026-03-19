@@ -301,8 +301,14 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         val recorder = audioRecorder ?: AndroidAudioRecorder().also { audioRecorder = it }
 
         val started = recorder.start(viewModelScope) { chunk ->
-            lastAudioSentTime = System.currentTimeMillis()
-            client.sendAudioChunk(chunk)
+            // Gate: suppress mic while Gervis is playing to prevent echo on devices
+            // where hardware AEC alone is not reliable. When the user barges in,
+            // Gemini sends an `interrupted` event which calls player.clear(),
+            // immediately setting hasPendingAudio=false and re-enabling mic sending.
+            if (audioPlayer?.hasPendingAudio != true) {
+                lastAudioSentTime = System.currentTimeMillis()
+                client.sendAudioChunk(chunk)
+            }
         }
 
         if (!started) {

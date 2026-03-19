@@ -140,14 +140,8 @@ async def enqueue_cloud_task(
                 "headers": {"Content-Type": "application/json"},
                 "body": task_body,
             },
-            "dispatch_deadline": duration_pb2.Duration(seconds=3600),
+            "dispatch_deadline": duration_pb2.Duration(seconds=1800),
         }
-
-        # Add OIDC auth in production if service account is configured
-        if settings.cloud_run_service_account:
-            task["http_request"]["oidc_token"] = {
-                "service_account_email": settings.cloud_run_service_account,
-            }
 
         client.create_task(request={"parent": parent, "task": task})
         logger.info(f"Cloud Tasks task enqueued for job {job_id}")

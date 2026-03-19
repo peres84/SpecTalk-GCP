@@ -126,6 +126,7 @@ async def execute_job(
 
         # FCM push notification
         push_token = await get_user_push_token(user_id)
+        logger.info(f"[{conversation_id}] FCM push_token for user {user_id}: {'found' if push_token else 'NULL — skipping notification'}")
         if push_token:
             await send_push_notification(
                 push_token=push_token,

@@ -16,9 +16,12 @@ from ws import voice_handler as ws_voice_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Set Gemini API key before initializing ADK
+    # Set Gemini API key before initializing ADK.
+    # Only GOOGLE_API_KEY should be set — having both GOOGLE_API_KEY and GEMINI_API_KEY
+    # causes the genai SDK to initialize two model connections per session (double audio).
     if settings.gemini_api_key:
-        os.environ.setdefault("GOOGLE_API_KEY", settings.gemini_api_key)
+        os.environ["GOOGLE_API_KEY"] = settings.gemini_api_key
+        os.environ.pop("GEMINI_API_KEY", None)
 
     from services.tracing import setup_tracing
     setup_tracing()

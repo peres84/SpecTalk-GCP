@@ -212,7 +212,7 @@ infrastructure in place. No Gemini yet — just the foundation.
 ---
 
 ## Phase 3 — Backend: Voice Agent + Gemini Live
-**Status: `🔄 IN PROGRESS — maps confirmed working, awaiting final approval`**
+**Status: `✅ APPROVED`**
 
 Goal: The backend becomes the full voice agent. Gemini Live session runs server-side. The audio
 WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `maps_tool` work.
@@ -293,7 +293,7 @@ WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `
 ---
 
 ## Phase 4 — Jobs, Notifications, and Resume Flow
-**Status: `🔄 IN PROGRESS — backend complete, awaiting Cloud Run deploy + Android wiring`**
+**Status: `🔄 IN PROGRESS — Cloud Tasks working, resume flow working, FCM push token debug pending`**
 
 Goal: Background jobs run via Cloud Tasks. Push notifications via FCM. User can leave, get
 notified when work completes, and resume naturally.
@@ -310,23 +310,35 @@ notified when work completes, and resume naturally.
 - [x] Resume context injection into Gemini on WebSocket reconnect (welcome-back message)
 - [x] `POST /conversations/{id}/ack-resume-event` endpoint
 - [x] Replace Opik with Google Cloud Trace (`services/tracing.py` rewrite)
-- [x] `docs/phase4-deployment.md` — full GCP setup + Android changes guide
+- [x] `docs/phase4-deployment.md` — full GCP setup + Android changes guide (PowerShell)
+- [x] `docs/shutdown-guide.md` — how to stop all GCP services
+- [x] `config.py` — asyncpg SSL URL validator (strips sslmode/channel_binding, injects `?ssl=require`)
+- [x] `db/database.py` — `pool_pre_ping=True` for Neon auto-suspend stale connection recovery
+- [x] `agents/orchestrator.py` — stronger background job prompt (Gemini now calls `start_background_job` for all research requests)
+- [x] `services/job_service.py` — removed OIDC token from Cloud Task (no longer needed; endpoint is public, protected by X-CloudTasks-QueueName header)
+- [x] `api/conversations.py` — FK-safe DELETE (also deletes resume_events by job_id before deleting jobs)
+- [x] `services/job_service.py` — dispatch deadline fixed (3600s → 1800s, Cloud Tasks max is 30 min)
+- [x] `BACKEND_BASE_URL` secret — fixed Windows `\r\r` carriage return corruption (was causing 400 Invalid URL on task enqueue)
+- [x] `main.py` — removed duplicate `GEMINI_API_KEY` env var (was causing genai SDK to init two connections → double audio response)
+- [x] `api/internal/jobs.py` — added push_token null logging to diagnose silent FCM skip
 
-### Cloud Run Deployment (required before Android testing)
+### Cloud Run Deployment
 
-- [ ] Create GCP project + enable APIs (see `docs/phase4-deployment.md`)
-- [ ] Create service account with all required IAM roles (incl. `roles/cloudtrace.agent`)
-- [ ] Add all secrets to Secret Manager
-      (`JWT_SECRET`, `DATABASE_URL`, `GEMINI_API_KEY`, `FIREBASE_SERVICE_ACCOUNT_JSON`,
-      `BACKEND_BASE_URL`)
-- [ ] Create Cloud Tasks queue `backend-jobs`
-- [ ] Create `gervis-migrate` Cloud Run Job (Alembic)
-- [ ] Run first deploy via `gcloud builds submit`
-- [ ] Fill in `BACKEND_BASE_URL` secret with the Cloud Run URL after first deploy
+- [x] GCP project `spectalk-488516` created, all APIs enabled
+- [x] Service account `gervis-backend@spectalk-488516.iam.gserviceaccount.com` created with all IAM roles
+- [x] All secrets added to Secret Manager (`JWT_SECRET`, `DATABASE_URL`, `GEMINI_API_KEY`, `FIREBASE_SERVICE_ACCOUNT_JSON`, `BACKEND_BASE_URL`)
+- [x] Cloud Tasks queue `backend-jobs` created (us-central1)
+- [x] `gervis-migrate` Cloud Run Job created (Alembic migrations)
+- [x] Backend deployed to Cloud Run (`gervis-backend` service, us-central1, min 0 instances, 1Gi)
+- [x] `BACKEND_BASE_URL` secret filled in with Cloud Run URL
+- [x] Android app `backend_base_url` updated to Cloud Run HTTPS URL
+- [ ] Deploy latest fixes (FCM push_token logging + GEMINI_API_KEY removal) — pending `gcloud builds submit`
 
 ### Android Tasks (send to frontend agent)
 
-- [ ] `strings.xml` — update `backend_base_url` to Cloud Run HTTPS URL
+- [x] `strings.xml` — `backend_base_url` updated to Cloud Run HTTPS URL
+- [x] `TokenRepository` — proactive FCM push token registration on every login (fixes token never reaching backend on existing installs)
+- [x] `VoiceAgentViewModel` — gate mic chunks on `hasPendingAudio` to fix echo (Gervis hearing its own voice)
 - [ ] `BackendVoiceClient` — handle `job_started` control message → show job indicator
 - [ ] `BackendVoiceClient` — handle `job_update` control message → update/dismiss indicator
 - [ ] FCM notification handler — tap opens matching conversation
@@ -336,14 +348,20 @@ notified when work completes, and resume naturally.
 
 ### Acceptance Criteria
 
-- [x] Say "start a demo job" → `job_started` received at phone, job row in DB
-- [ ] `POST /internal/jobs/execute` called (manually or via Cloud Tasks) → job completes
-- [ ] FCM notification arrives when job completes
-- [ ] Tapping notification opens the right conversation
-- [ ] Gemini speaks a natural welcome-back message using resume event data
+- [x] Say "research X" → Gemini calls `start_background_job` → spoken ack → job row in DB
+- [x] Cloud Tasks automatically calls `/internal/jobs/execute` → job completes ✅
+- [x] FCM notification arrives on device (confirmed via manual curl)
+- [x] Gemini speaks welcome-back message on reconnect using resume event data ✅
+- [ ] FCM notification arrives automatically after Cloud Tasks job (push_token null — debug pending)
+- [ ] Tapping notification opens the right conversation (Android not yet wired)
 - [ ] Conversation list shows badge, clears after `ack-resume-event`
+- [ ] Cross-session conversation history (agent starts fresh each reconnect — Phase 6)
 
-### ⏸ Awaiting Cloud Run deploy + Android wiring before approval to proceed to Phase 5
+### Known limitations
+- Agent has no memory across sessions (InMemoryRunner resets on Cloud Run restart/scale-to-zero)
+- FCM auto-notification not yet confirmed end-to-end (push_token lookup returning null in Cloud Task context)
+
+### ⏸ Awaiting FCM end-to-end + Android notification wiring before approval to proceed to Phase 5
 
 ---
 
@@ -411,7 +429,7 @@ Goal: 3D model workflow, long-term memory, artifact browser in app, richer multi
 - [x] Phase 0 approved
 - [ ] Phase 1 approved
 - [x] Phase 2 approved
-- [ ] Phase 3 approved
+- [x] Phase 3 approved
 - [ ] Phase 4 approved
 - [ ] Phase 5 approved
 - [ ] Phase 6 approved

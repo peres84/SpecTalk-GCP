@@ -40,6 +40,7 @@ def setup_tracing() -> None:
 
     if mode == "cloud":
         project_id = os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        logger.info(f"Cloud Trace setup: ENABLE_TRACING={mode!r} GCP_PROJECT={project_id!r}")
         if not project_id:
             logger.error(
                 "ENABLE_TRACING=cloud but GCP_PROJECT is not set — tracing disabled"

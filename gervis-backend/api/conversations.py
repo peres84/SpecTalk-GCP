@@ -109,9 +109,18 @@ async def delete_conversation(
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
-    # Delete child rows in FK-safe order:
-    # resume_events → pending_actions → turns → assets → jobs → conversation
+    # Delete child rows in FK-safe order.
+    # resume_events has FKs to both conversation_id AND job_id, so we must
+    # delete all resume_events referencing jobs in this conversation BEFORE
+    # deleting the jobs themselves (handles cross-conversation edge cases).
+    job_ids_result = await db.execute(
+        select(Job.id).where(Job.conversation_id == conv_id)
+    )
+    job_ids = [r[0] for r in job_ids_result.fetchall()]
+
     await db.execute(delete(ResumeEvent).where(ResumeEvent.conversation_id == conv_id))
+    if job_ids:
+        await db.execute(delete(ResumeEvent).where(ResumeEvent.job_id.in_(job_ids)))
     await db.execute(delete(PendingAction).where(PendingAction.conversation_id == conv_id))
     await db.execute(delete(Turn).where(Turn.conversation_id == conv_id))
     await db.execute(delete(Asset).where(Asset.conversation_id == conv_id))

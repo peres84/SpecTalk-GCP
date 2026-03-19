@@ -5,6 +5,28 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — Fix echo: gate mic during playback
+
+### Fixed
+
+#### Gervis hears its own voice — echo feedback loop
+- **Symptom:** Gervis's voice was picked up by the mic and streamed back to the backend
+  as user speech, causing Gemini to respond to its own output (echo loop).
+- **Root cause:** `PcmAudioPlayer` creates an `AudioTrack` with an auto-generated session
+  ID, while `AcousticEchoCanceler` is attached to the `AudioRecord`'s session ID. Different
+  sessions mean software AEC has no reference signal for the playback audio. Hardware AEC
+  (via `USAGE_VOICE_COMMUNICATION` on both recorder and player) was previously masking this,
+  but became unreliable after the backend was fixed to send a single clean audio stream
+  instead of the prior double-connection audio.
+- **Fix:** Added a `hasPendingAudio` gate in the mic chunk callback in `VoiceAgentViewModel`.
+  While `PcmAudioPlayer.hasPendingAudio` is true (Gervis is speaking), mic chunks are not
+  sent to the backend. When the user barges in, Gemini sends an `interrupted` event →
+  `player.clear()` is called → `hasPendingAudio` becomes false immediately → mic sending
+  resumes within one chunk cycle (~64ms).
+- **File:** `voice/VoiceAgentViewModel.kt`
+
+---
+
 ## [Unreleased] — Proactive FCM push token registration on login
 
 ### Fixed
