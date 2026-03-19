@@ -6,7 +6,83 @@ Entries are ordered newest-first within each phase.
 ---
 
 ## Phase 4 - Jobs, Notifications, and Resume Flow
-> Status: Implementation complete — awaiting Cloud Run deployment and approval
+> Status: **Deployed** — running on Cloud Run (spectalk-488516, us-central1)
+
+### [Phase 4.3] - Cloud Run deployment fixes
+**Files:** `cloudbuild.yaml`, `config.py`, `docs/phase4-deployment.md`
+
+Several issues surfaced during the first Cloud Run deployment. All fixed.
+
+**`cloudbuild.yaml` — migration step split:**
+
+`gcloud run jobs execute` does not accept `--image`. The migration step was split into two:
+1. `gcloud run jobs update gervis-migrate --image=...` — updates the job to the new image
+2. `gcloud run jobs execute gervis-migrate --wait` — runs it
+
+The `gervis-migrate` Cloud Run Job must be pre-created once (see deployment guide Step 8)
+before Cloud Build can update and execute it.
+
+**`cloudbuild.yaml` — `_SERVICE_ACCOUNT` substitution removed:**
+
+Passing a service account email containing `@` via `--substitutions` breaks gcloud's
+substitution parser — the `@` caused `_IMAGE_TAG=latest` to be appended to the SA email.
+Fix: hardcoded `gervis-backend@${PROJECT_ID}.iam.gserviceaccount.com` directly in the YAML
+deploy step using the built-in `${PROJECT_ID}` variable. `_SERVICE_ACCOUNT` removed from
+the `substitutions` block entirely.
+
+**`cloudbuild.yaml` — memory limit increased:**
+
+Default Cloud Run memory is 512 MiB. The backend needs ~550 MiB at startup (ADK + FastAPI +
+all dependencies). Added `--memory=1Gi` to the deploy step. Without this the container OOMs
+on every start and Cloud Run never marks the revision healthy.
+
+**`cloudbuild.yaml` — `--allow-unauthenticated`:**
+
+Changed from `--no-allow-unauthenticated` to `--allow-unauthenticated`. The `--no-allow-unauthenticated`
+flag requires a Google OIDC token on every request, blocking Android clients entirely (they
+send product JWTs, not OIDC tokens). Authentication is handled at the application layer by
+the JWT middleware. The `/internal/jobs/execute` endpoint is protected by the
+`X-CloudTasks-QueueName` header check in `environment=production`.
+
+**`config.py` — asyncpg SSL URL sanitization:**
+
+Neon PostgreSQL connection strings use psycopg2-style query params: `?sslmode=require&channel_binding=require`.
+asyncpg does not accept these parameters and crashes with `TypeError: connect() got an
+unexpected keyword argument 'sslmode'` (and then `'channel_binding'` after fixing sslmode).
+Added a `@field_validator("database_url")` that strips all query params and replaces them
+with `?ssl=require` when any SSL mode was requested. This runs at settings load time so both
+the app and the Alembic migration job get a clean URL.
+
+**`docs/phase4-deployment.md` — rewritten with PowerShell instructions:**
+
+The deployment guide was rewritten with step-by-step PowerShell commands matching exactly
+what worked. Includes: variable setup, API enablement, SA creation, Cloud Build SA IAM
+(granting to the Compute SA, not the Cloud Build SA), secret creation notes, migration job
+pre-creation, troubleshooting section for every error encountered during deployment.
+
+---
+
+### [Phase 4.2] - Cloud Build IAM for Compute SA
+**Context:** Cloud Build permissions
+
+Modern GCP projects use the **Compute Engine default SA**
+(`PROJECT_NUMBER-compute@developer.gserviceaccount.com`) as the Cloud Build identity, not
+`PROJECT_NUMBER@cloudbuild.gserviceaccount.com`. Granting `roles/run.admin` and
+`roles/iam.serviceAccountUser` to the wrong SA causes `PERMISSION_DENIED: Permission
+'run.jobs.get' denied` on every migration step.
+
+Fix: grant the roles to the Compute SA. The project number (not project ID) is needed:
+
+```powershell
+$env:PROJECT_NUMBER = gcloud projects describe $env:PROJECT_ID --format="value(projectNumber)"
+$env:CB_SA = "$env:PROJECT_NUMBER-compute@developer.gserviceaccount.com"
+gcloud projects add-iam-policy-binding $env:PROJECT_ID --member="serviceAccount:$env:CB_SA" --role="roles/run.admin"
+gcloud iam service-accounts add-iam-policy-binding "gervis-backend@$env:PROJECT_ID.iam.gserviceaccount.com" --member="serviceAccount:$env:CB_SA" --role="roles/iam.serviceAccountUser"
+```
+
+No code changes — IAM only.
+
+---
 
 ### [Phase 4.1] - Replace Opik with Google Cloud Trace
 **Files:** `services/tracing.py`, `ws/voice_handler.py`, `tools/location_tool.py`,
