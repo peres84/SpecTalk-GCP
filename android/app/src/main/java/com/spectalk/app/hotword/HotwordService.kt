@@ -158,8 +158,10 @@ class HotwordService : Service(), RecognitionListener {
             ?.takeIf { it.isNotBlank() }
             ?: DEFAULT_WAKE_WORD
 
-        val shortName = configuredWord.removePrefix("hey ").trim()
-        val grammar = """["$configuredWord", "$shortName", "[unk]"]"""
+        // Grammar contains only the full phrase + [unk]. The short name ("gervis")
+        // is intentionally omitted — including it causes the model to actively try
+        // to match it, increasing false positives on phonetically similar words.
+        val grammar = """["$configuredWord", "[unk]"]"""
 
         try {
             val recognizer = Recognizer(loadedModel, SAMPLE_RATE, grammar)
@@ -193,7 +195,12 @@ class HotwordService : Service(), RecognitionListener {
         if (!deviceState.isWakeWordReady) return
         try {
             val text = JSONObject(hypothesis).optString("text", "").trim()
-            if (text.isNotEmpty() && text != "[unk]" && isWakePhrase(text)) {
+            // Only act on the committed final result, and only on the full configured
+            // phrase (e.g. "hey gervis"). Single-word matches ("[unk]", "gervis" alone)
+            // are excluded here — they produce too many false positives because the small
+            // Vosk model maps acoustically similar words ("nervous", "service") onto the
+            // short name from constrained grammar.
+            if (text.isNotEmpty() && text != "[unk]" && isFullWakePhrase(text)) {
                 Log.i(TAG, "Wake word detected: \"$text\"")
                 HotwordEventBus.notifyWakeWord()
                 postWakeNotification()
@@ -203,17 +210,10 @@ class HotwordService : Service(), RecognitionListener {
     }
 
     override fun onPartialResult(hypothesis: String?) {
-        hypothesis ?: return
-        if (!deviceState.isWakeWordReady) return
-        try {
-            val text = JSONObject(hypothesis).optString("partial", "").trim()
-            if (text.isNotEmpty() && isWakePhrase(text)) {
-                Log.i(TAG, "Wake word detected (partial): \"$text\"")
-                HotwordEventBus.notifyWakeWord()
-                postWakeNotification()
-            }
-        } catch (_: JSONException) {
-        }
+        // Partial results are intermediate, unstable hypotheses that change continuously
+        // as audio arrives. Using them for wake-word decisions causes false positives
+        // because the constrained grammar maps similar-sounding phonemes onto the wake
+        // word mid-utterance. All triggering happens in onResult (final committed result).
     }
 
     override fun onFinalResult(hypothesis: String?) {}
@@ -230,12 +230,17 @@ class HotwordService : Service(), RecognitionListener {
         updateListeningState()
     }
 
-    private fun isWakePhrase(text: String): Boolean {
+    /**
+     * Returns true only when [text] contains the full configured wake phrase
+     * (e.g. "hey gervis"). Single-word matches are intentionally excluded to
+     * reduce false positives — the two-word sequence is acoustically distinctive,
+     * while the short name alone ("gervis") collides with common phonemes.
+     */
+    private fun isFullWakePhrase(text: String): Boolean {
         val prefs: SharedPreferences = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val configuredWord = prefs.getString(PREF_WAKE_WORD, DEFAULT_WAKE_WORD)
             ?.trim()?.lowercase() ?: DEFAULT_WAKE_WORD
-        val shortName = configuredWord.removePrefix("hey ").trim()
-        return text.contains(configuredWord) || text == shortName
+        return text.contains(configuredWord)
     }
 
     private fun buildNotification(): Notification {

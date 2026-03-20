@@ -101,7 +101,9 @@ dependencies {
 // This task downloads and extracts it into assets/model/ automatically
 // before every build. It is a no-op if the model already exists.
 // ---------------------------------------------------------------------------
-val voskModelUrl = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+// 0.22 small model is significantly more accurate with constrained grammars
+// (better wake word precision) while staying the same ~40 MB download size.
+val voskModelUrl = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.22.zip"
 val voskModelDir = file("src/main/assets/model")
 
 tasks.register("downloadVoskModel") {
@@ -121,7 +123,7 @@ tasks.register("downloadVoskModel") {
         ZipInputStream(zipFile.inputStream()).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
-                // Strip the top-level folder from the zip (vosk-model-small-en-us-0.15/...)
+                // Strip the top-level folder from the zip (vosk-model-small-en-us-0.22/...)
                 // and map it to assets/model/...
                 val stripped = entry.name.substringAfter("/")
                 if (stripped.isNotEmpty()) {

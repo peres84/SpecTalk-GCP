@@ -5,6 +5,40 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — Fix wake word false positives
+
+### Fixed
+
+#### Wake word triggers without saying "Hey Gervis" [HIGH]
+Three compounding root causes identified and fixed:
+
+- **Root cause 1 — `onPartialResult` was firing the wake word:** Vosk emits partial
+  results continuously as audio arrives; they are unstable mid-utterance hypotheses
+  designed for live-caption display, not decision making. The constrained grammar was
+  mapping phonemes similar to "gervis" (e.g. "nervous", "service") onto the wake word
+  during partial evaluation. `onPartialResult` is now a no-op — all triggering moves
+  exclusively to `onResult` (the final, committed hypothesis).
+
+- **Root cause 2 — Short-name trigger (`"gervis"` alone) was too loose:** `isWakePhrase`
+  matched `text == shortName` which is just `"gervis"` without "hey". A single word is
+  acoustically ambiguous; the whole point of a two-word keyphrase is that the sequence
+  is statistically rare in ambient speech. `isWakePhrase` replaced with `isFullWakePhrase`
+  that only matches when `text.contains(configuredWord)` — the full phrase is required.
+
+- **Root cause 3 — Short name in the Vosk grammar:** The grammar included both
+  `"hey gervis"` and `"gervis"` as explicit alternatives. This actively instructed Vosk
+  to search for the short name, increasing its probability of matching ambient phonemes.
+  Grammar simplified to `["hey gervis", "[unk]"]` — the short name is removed.
+
+- **Secondary improvement — Vosk model upgraded:** `vosk-model-small-en-us-0.15` (2021)
+  replaced with `vosk-model-small-en-us-0.22` in `app/build.gradle.kts`. Same ~40 MB
+  download; significantly better accuracy with constrained grammars. To apply: delete
+  `android/app/src/main/assets/model/` and rebuild — the Gradle task re-downloads automatically.
+
+- **Files:** `hotword/HotwordService.kt`, `app/build.gradle.kts`
+
+---
+
 ## [Unreleased] — UX redesign: Apple-inspired interaction across all screens
 
 ### Changed
