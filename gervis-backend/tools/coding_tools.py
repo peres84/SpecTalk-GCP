@@ -26,6 +26,16 @@ from google.adk.tools import ToolContext
 logger = logging.getLogger(__name__)
 
 
+def _clear_state_key(state, key: str) -> None:
+    """Clear an ADK state key without using dict.pop().
+
+    ADK session State supports get/set/update but not pop/delete. We store None
+    and treat falsy values as absent when reading.
+    """
+    if state is not None:
+        state[key] = None
+
+
 @opik.track(name="request_clarification", project_name="gervis",
             capture_input=True, capture_output=True,
             ignore_arguments=["tool_context"])
@@ -127,7 +137,7 @@ async def generate_and_confirm_prd(
 
     # Store in ADK session state so confirm_and_dispatch can retrieve it
     state["pending_prd"] = prd
-    existing_project = state.get("selected_project")
+    existing_project = state.get("selected_project") or None
     preferred_network_host = state.get("preferred_network_host")
 
     # Build a natural spoken summary
@@ -247,8 +257,8 @@ async def confirm_and_dispatch(
             logger.warning(f"[{conversation_id}] Could not fetch PendingAction: {e}")
 
     if confirmed:
-        prd = state.get("pending_prd", {})
-        existing_project = state.get("selected_project")
+        prd = state.get("pending_prd") or {}
+        existing_project = state.get("selected_project") or None
         preferred_network_host = (
             state.get("preferred_network_host")
             or (pending_action_payload or {}).get("preferred_network_host")
@@ -362,7 +372,7 @@ async def confirm_and_dispatch(
                 logger.warning(f"[{conversation_id}] Could not cancel PendingAction: {e}")
 
         # Clear PRD from session state so next call to generate_and_confirm_prd starts fresh
-        state.pop("pending_prd", None)
+        _clear_state_key(state, "pending_prd")
         state["clarification_count"] = 0
 
         asyncio.create_task(

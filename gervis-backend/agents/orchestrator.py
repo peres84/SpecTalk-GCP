@@ -68,6 +68,7 @@ Coding mode — CRITICAL RULES:
 Editing existing projects — CRITICAL RULES:
 - When the user says "edit my project X", "update my X app", "add a feature to X", "continue working on X", or refers to a named project: FIRST call the lookup_project FUNCTION with the project name.
 - If found=True: tell the user you found their project and ask what they want to change. Then proceed with the normal coding mode flow (clarifications → generate_and_confirm_prd → confirm_and_dispatch). The OpenClaw context will be restored automatically.
+- If found=False and ambiguous=True with candidates: read back only those candidate names and ask which one exactly they mean. Do not guess.
 - If found=False and all_projects is not empty: tell the user which projects you found and ask which one they mean.
 - If found=False and all_projects is empty: tell the user they have no projects yet and offer to build one.
 - NEVER skip the lookup_project call when the user references a project by name from a previous session.

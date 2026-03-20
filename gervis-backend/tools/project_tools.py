@@ -13,6 +13,17 @@ from google.adk.tools import ToolContext
 logger = logging.getLogger(__name__)
 
 
+def _clear_state_key(state: Any, key: str) -> None:
+    """Clear an ADK state key without relying on dict.pop().
+
+    google.adk.sessions.state.State supports get/set/update but does not expose
+    pop/delete helpers, so we mark cleared values as None and let readers treat
+    None as absent.
+    """
+    if state is not None:
+        state[key] = None
+
+
 @opik.track(name="lookup_project", project_name="gervis",
             capture_input=True, capture_output=True,
             ignore_arguments=["tool_context"])
@@ -39,7 +50,11 @@ async def lookup_project(
           - has_openclaw_context (bool): whether OpenClaw has prior session context
           - all_projects (list): names of all user projects (only when found=False)
     """
-    from services.project_service import find_user_project, list_user_projects
+    from services.project_service import (
+        find_user_project,
+        find_user_project_candidates,
+        list_user_projects,
+    )
 
     state = tool_context.state if tool_context else {}
     conversation_id: str = state.get("conversation_id", "")
@@ -91,11 +106,14 @@ async def lookup_project(
             "has_openclaw_context": project.last_openclaw_response_id is not None,
         }
     else:
-        state.pop("selected_project", None)
+        _clear_state_key(state, "selected_project")
+        candidates = await find_user_project_candidates(user_id, project_name, limit=3)
         all_projects = await list_user_projects(user_id)
         names = [p.project_name for p in all_projects]
         logger.info(f"lookup_project: '{project_name}' not found for user {user_id}. Existing: {names}")
         return {
             "found": False,
+            "ambiguous": bool(candidates),
+            "candidates": [p.project_name for p in candidates],
             "all_projects": names,
         }
