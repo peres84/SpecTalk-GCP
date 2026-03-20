@@ -7,6 +7,7 @@ from tools.location_tool import get_user_location
 from tools.maps_tool import find_nearby_places
 from tools.notification_resume_tool import start_background_job
 from tools.coding_tools import request_clarification, generate_and_confirm_prd, confirm_and_dispatch
+from tools.project_tools import lookup_project
 
 GERVIS_INSTRUCTION = """You are Gervis, the AI assistant inside SpecTalk - a voice-powered project creation platform for Meta wearables.
 
@@ -58,6 +59,13 @@ Coding mode — CRITICAL RULES:
 - NEVER start building without confirmation. Always call generate_and_confirm_prd first, then wait.
 - Valid job_type for coding jobs is "coding".
 
+Editing existing projects — CRITICAL RULES:
+- When the user says "edit my project X", "update my X app", "add a feature to X", "continue working on X", or refers to a named project: FIRST call the lookup_project FUNCTION with the project name.
+- If found=True: tell the user you found their project and ask what they want to change. Then proceed with the normal coding mode flow (clarifications → generate_and_confirm_prd → confirm_and_dispatch). The OpenClaw context will be restored automatically.
+- If found=False and all_projects is not empty: tell the user which projects you found and ask which one they mean.
+- If found=False and all_projects is empty: tell the user they have no projects yet and offer to build one.
+- NEVER skip the lookup_project call when the user references a project by name from a previous session.
+
 Greeting: When a session starts, greet the user briefly and ask what they'd like to build or explore today."""
 
 
@@ -76,5 +84,6 @@ def create_gervis_agent(model: str) -> Agent:
             request_clarification,
             generate_and_confirm_prd,
             confirm_and_dispatch,
+            lookup_project,
         ],
     )

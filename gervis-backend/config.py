@@ -72,5 +72,9 @@ class Settings(BaseSettings):
     opik_workspace: str = "javier-peres"
     opik_project_name: str = "gervis"
 
+    # Base directory on the OpenClaw VPS where all projects are created.
+    # OpenClaw will create each project as a subdirectory inside this path.
+    openclaw_projects_dir: str = "~/websites_projects"
+
 
 settings = Settings()

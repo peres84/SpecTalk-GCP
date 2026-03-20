@@ -138,7 +138,7 @@ class GeminiLiveClient:
                 app_name=settings.adk_app_name,
                 user_id=user_id,
                 session_id=session_id,
-                state={"conversation_id": session_id},
+                state={"conversation_id": session_id, "user_id": user_id},
             )
         return session
 

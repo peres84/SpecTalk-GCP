@@ -28,6 +28,7 @@ class User(Base):
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
     assets: Mapped[list["Asset"]] = relationship(back_populates="user")
     integrations: Mapped[list["UserIntegration"]] = relationship(back_populates="user")
+    projects: Mapped[list["UserProject"]] = relationship(back_populates="user")
 
 
 class Conversation(Base):
@@ -192,6 +193,49 @@ class UserIntegration(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "service_name", name="uq_user_integration"),
+    )
+
+
+class UserProject(Base):
+    """Per-user project registry — persists project metadata across sessions.
+
+    Created/updated when a coding job completes successfully.
+    Enables cross-session lookups like "edit my project langdrill".
+    """
+    __tablename__ = "user_projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    # Display name as provided in the PRD (e.g. "LangDrill")
+    project_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    # Normalized slug for fuzzy voice matching (lowercase, alphanumeric only, e.g. "langdrill")
+    slug: Mapped[str] = mapped_column(String(256), nullable=False)
+    # Absolute path on the OpenClaw VPS
+    path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Live HTTP URL (if nginx deployment succeeded)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Most recent OpenClaw response_id — used for context chaining on edit jobs
+    last_openclaw_response_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # FK to the most recent job that created/updated this project
+    last_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="projects")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "slug", name="uq_user_project_slug"),
+        Index("idx_user_projects_user", "user_id"),
     )
 
 

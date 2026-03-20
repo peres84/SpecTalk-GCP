@@ -20,22 +20,38 @@ import logging
 import httpx
 import opik
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 
 # Total time budget for a coding job (OpenClaw may take several minutes)
 _OPENCLAW_TIMEOUT = 1800  # 30 minutes
 
 
-async def _get_last_response_id(conversation_id: str) -> str | None:
-    """Return the most recent OpenClaw response_id for this conversation, if any."""
+async def _get_last_response_id(conversation_id: str, user_id: str, project_name: str) -> str | None:
+    """Return the most recent OpenClaw response_id for this project.
+
+    Checks UserProject first (cross-session), then falls back to job artifacts
+    (same-session, for backward compatibility).
+    """
+    from services.project_service import find_user_project
+
+    # Cross-session: UserProject stores the last response_id per project name
+    if user_id and project_name:
+        project = await find_user_project(user_id, project_name)
+        if project and project.last_openclaw_response_id:
+            return project.last_openclaw_response_id
+
+    # Same-session fallback: look at job artifacts
     from sqlalchemy import select, desc
     from db.database import AsyncSessionLocal
     from db.models import Job
+    import uuid
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Job)
-            .where(Job.conversation_id == conversation_id)
+            .where(Job.conversation_id == uuid.UUID(conversation_id))
             .where(Job.job_type == "coding")
             .where(Job.status == "completed")
             .order_by(desc(Job.created_at))
@@ -43,7 +59,7 @@ async def _get_last_response_id(conversation_id: str) -> str | None:
         )
         job = result.scalar_one_or_none()
         if job and job.artifacts:
-            for artifact in job.artifacts:
+            for artifact in job.artifacts if isinstance(job.artifacts, list) else []:
                 if artifact.get("type") == "openclaw_response_id":
                     return artifact.get("url")
     return None
@@ -96,7 +112,7 @@ async def execute_coding_job(
     session_key = f"spectalk-{conversation_id}"  # per-conversation, not per-job
 
     # ── 2. Look up prior context ──────────────────────────────────────────────
-    previous_response_id = await _get_last_response_id(conversation_id)
+    previous_response_id = await _get_last_response_id(conversation_id, user_id, project_name)
     if previous_response_id:
         logger.info(
             f"[{conversation_id}] Chaining from previous OpenClaw response: {previous_response_id}"
@@ -107,7 +123,8 @@ async def execute_coding_job(
         f"Build the following project according to this PRD.\n\n"
         f"PRD:\n{prd_json}\n\n"
         f"IMPORTANT — when the build is complete, do the following:\n"
-        f"1. Create the project inside a folder named after the project (use snake_case).\n"
+        f"1. Create the project inside '{settings.openclaw_projects_dir}/<project_slug>/' (use snake_case for the folder name, e.g. lang_drill for 'LangDrill').\n"
+        f"   Create the parent directory if it does not exist.\n"
         f"2. Deploy it using nginx so it is accessible over HTTP.\n"
         f"3. Reply with ONLY these two lines (no extra explanation):\n"
         f"   PATH: <exact absolute path to the project folder>\n"
@@ -211,6 +228,20 @@ async def execute_coding_job(
     else:
         spoken = f"Your {project_name} project has been built by OpenClaw."
         display = f"OpenClaw finished building {project_name}."
+
+    # Persist project metadata to UserProject for cross-session memory
+    try:
+        from services.project_service import upsert_user_project
+        await upsert_user_project(
+            user_id=user_id,
+            project_name=project_name,
+            job_id=job_id,
+            path=project_path,
+            url=project_url,
+            last_openclaw_response_id=openclaw_response_id,
+        )
+    except Exception as e:
+        logger.warning(f"[{conversation_id}] Failed to upsert UserProject: {e}")
 
     return {
         "spoken_summary": spoken,
