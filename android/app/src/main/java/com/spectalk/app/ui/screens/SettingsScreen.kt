@@ -11,7 +11,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,7 +31,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -125,6 +127,7 @@ fun SettingsScreen(
     var projectNetworkHost by remember {
         mutableStateOf(AppPreferences.getProjectNetworkHost(context))
     }
+    var voiceLanguageMenuExpanded by remember { mutableStateOf(false) }
     var locationSummary by remember { mutableStateOf<String?>(null) }
     var locationBusy by remember { mutableStateOf(false) }
 
@@ -199,26 +202,50 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     )
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    ExposedDropdownMenuBox(
+                        expanded = voiceLanguageMenuExpanded,
+                        onExpandedChange = { voiceLanguageMenuExpanded = !voiceLanguageMenuExpanded },
                     ) {
-                        Column {
-                            val voiceOptions = AppPreferences.AgentVoiceLanguage.values().toList()
-                            voiceOptions.forEachIndexed { index, option ->
-                                VoiceLanguageOptionRow(
-                                    option = option,
-                                    selected = option == agentVoiceLanguage,
-                                    onSelect = {
+                        OutlinedTextField(
+                            value = agentVoiceLanguage.label,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Language") },
+                            supportingText = { Text(agentVoiceLanguage.subtitle) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            ),
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = voiceLanguageMenuExpanded)
+                            },
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth(),
+                        )
+                        ExposedDropdownMenu(
+                            expanded = voiceLanguageMenuExpanded,
+                            onDismissRequest = { voiceLanguageMenuExpanded = false },
+                        ) {
+                            AppPreferences.AgentVoiceLanguage.values().forEach { option ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                                            Text(
+                                                option.subtitle,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                            )
+                                        }
+                                    },
+                                    onClick = {
                                         agentVoiceLanguage = option
                                         AppPreferences.setAgentVoiceLanguage(context, option)
+                                        voiceLanguageMenuExpanded = false
                                     },
                                 )
-                                if (index < voiceOptions.lastIndex) {
-                                    HorizontalDivider(
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                                    )
-                                }
                             }
                         }
                     }
@@ -250,7 +277,7 @@ fun SettingsScreen(
                             .height(48.dp),
                         shape = RoundedCornerShape(12.dp),
                     ) {
-                        Text("Save", style = MaterialTheme.typography.labelLarge)
+                        Text("Save wake word", style = MaterialTheme.typography.labelLarge)
                     }
                 }
             }
@@ -322,6 +349,7 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                             )
                             Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -337,53 +365,61 @@ fun SettingsScreen(
                                             }
                                         }
                                     },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp),
                                     shape = RoundedCornerShape(10.dp),
                                 ) {
                                     Text(if (metaAccessState.isRegistered) "Reconnect" else "Connect")
                                 }
                                 OutlinedButton(
                                     onClick = {
-                                        scope.launch {
-                                            val granted = MetaWearablesAccessManager.requestCameraPermission()
-                                            if (!granted) {
-                                                snackbarHostState.showSnackbar(
-                                                    "Meta camera permission was not granted."
-                                                )
-                                            }
-                                        }
+                                        activity?.let { MetaWearablesAccessManager.startUnregistration(it) }
                                     },
-                                    enabled = metaAccessState.isRegistered &&
-                                        !metaAccessState.hasCameraPermission &&
-                                        !metaAccessState.isPermissionRequestInFlight,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp),
+                                    enabled = metaAccessState.isRegistered && activity != null,
                                     shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.error,
+                                    ),
                                 ) {
-                                    if (metaAccessState.isPermissionRequestInFlight) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                        )
-                                    } else {
-                                        Text(
-                                            when {
-                                                metaAccessState.hasCameraPermission -> "Granted"
-                                                !metaAccessState.isRegistered -> "Connect first"
-                                                else -> "Grant camera"
-                                            }
-                                        )
-                                    }
+                                    Text("Disconnect")
                                 }
-                                if (metaAccessState.isRegistered && activity != null) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            MetaWearablesAccessManager.startUnregistration(activity)
-                                        },
-                                        shape = RoundedCornerShape(10.dp),
-                                        colors = ButtonDefaults.outlinedButtonColors(
-                                            contentColor = MaterialTheme.colorScheme.error,
-                                        ),
-                                    ) {
-                                        Text("Disconnect")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        val granted = MetaWearablesAccessManager.requestCameraPermission()
+                                        if (!granted) {
+                                            snackbarHostState.showSnackbar(
+                                                "Meta camera permission was not granted."
+                                            )
+                                        }
                                     }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp),
+                                enabled = metaAccessState.isRegistered &&
+                                    !metaAccessState.hasCameraPermission &&
+                                    !metaAccessState.isPermissionRequestInFlight,
+                                shape = RoundedCornerShape(10.dp),
+                            ) {
+                                if (metaAccessState.isPermissionRequestInFlight) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                } else {
+                                    Text(
+                                        when {
+                                            metaAccessState.hasCameraPermission -> "Camera granted"
+                                            !metaAccessState.isRegistered -> "Connect first"
+                                            else -> "Grant camera"
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -683,60 +719,6 @@ private fun SettingsToggleRow(
     }
 }
 
-@Composable
-private fun VoiceLanguageOptionRow(
-    option: AppPreferences.AgentVoiceLanguage,
-    selected: Boolean,
-    onSelect: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onSelect)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(10.dp)
-                .clip(CircleShape)
-                .background(
-                    if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
-                ),
-        )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(
-                text = option.label,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = option.subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
-        }
-        if (selected) {
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-            ) {
-                Text(
-                    text = "Active",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                )
-            }
-        }
-    }
-}
-
 // ── Integration row ───────────────────────────────────────────────────────────
 
 @Composable
@@ -759,66 +741,66 @@ private fun IntegrationRow(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text = "OpenClaw",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = "AI coding agent — use a public URL the backend can reach",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                )
-                if (item != null && item.connected) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                    ) {
-                        Text(
-                            text = "Connected · ${item.urlPreview}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                        )
-                    }
-                } else {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                    ) {
-                        Text(
-                            text = "Not connected",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                        )
-                    }
+            Text(
+                text = "OpenClaw",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = "AI coding agent - use a public URL the backend can reach",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+            if (item != null && item.connected) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Text(
+                        text = "Connected · ${item.urlPreview}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Text(
+                        text = "Not connected",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
                 }
             }
+        }
 
-            if (item != null && item.connected) {
-                OutlinedButton(
-                    onClick = onDisconnect,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error,
-                    ),
-                ) { Text("Disconnect") }
-            } else if (!showConnectForm) {
-                Button(
-                    onClick = onShowForm,
-                    shape = RoundedCornerShape(10.dp),
-                ) { Text("Connect") }
-            }
+        if (item != null && item.connected) {
+            OutlinedButton(
+                onClick = onDisconnect,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
+            ) { Text("Disconnect OpenClaw") }
+        } else if (!showConnectForm) {
+            Button(
+                onClick = onShowForm,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(10.dp),
+            ) { Text("Connect OpenClaw") }
         }
 
         AnimatedVisibility(visible = showConnectForm) {
@@ -834,7 +816,7 @@ private fun IntegrationRow(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    text = "Use the public OpenClaw base URL here. Do not use localhost or a private 100.x Tailscale address in this field — the backend must reach it directly. Save your 100.x host in Project Links instead.",
+                    text = "Use the public OpenClaw base URL here. Do not use localhost or a private 100.x Tailscale address in this field - the backend must reach it directly. Save your 100.x host in Project Links instead.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
@@ -857,28 +839,32 @@ private fun IntegrationRow(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = onSave,
-                        enabled = connectUrl.isNotBlank() && connectToken.isNotBlank() && !connectBusy,
-                        shape = RoundedCornerShape(10.dp),
-                    ) {
-                        if (connectBusy) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        } else {
-                            Text("Save")
-                        }
+                Button(
+                    onClick = onSave,
+                    enabled = connectUrl.isNotBlank() && connectToken.isNotBlank() && !connectBusy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    if (connectBusy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    } else {
+                        Text("Save OpenClaw")
                     }
-                    OutlinedButton(
-                        onClick = onDismissForm,
-                        enabled = !connectBusy,
-                        shape = RoundedCornerShape(10.dp),
-                    ) { Text("Cancel") }
                 }
+                OutlinedButton(
+                    onClick = onDismissForm,
+                    enabled = !connectBusy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(10.dp),
+                ) { Text("Cancel") }
             }
         }
     }

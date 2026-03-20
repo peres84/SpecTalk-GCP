@@ -40,42 +40,53 @@ def _normalize_network_host(raw: str | None) -> str | None:
     return urlunparse((parsed.scheme or "http", parsed.netloc, "", "", "", ""))
 
 
-def _rewrite_project_url(project_url: str | None, preferred_network_host: str | None) -> str | None:
-    if not project_url:
-        return project_url
+def _extract_runtime_port(*values: str | None) -> int | None:
+    """Extract the runtime port from OpenClaw output.
 
-    normalized_host = _normalize_network_host(preferred_network_host)
-    if not normalized_host:
-        return project_url
-
-    raw_project_url = project_url.strip()
-    current = urlparse(raw_project_url if "://" in raw_project_url else f"http://{raw_project_url}")
-    preferred = urlparse(normalized_host)
-    if not preferred.hostname:
-        return project_url
-
-    port = current.port or preferred.port
-    if port is None:
-        match = re.search(r":(\d{2,5})(?:/|$)", raw_project_url) or re.search(
+    Accepts raw URL-ish strings or free-form text and returns the first plausible
+    app port it can find.
+    """
+    for value in values:
+        raw = (value or "").strip()
+        if not raw:
+            continue
+        parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+        if parsed.port:
+            return parsed.port
+        match = re.search(r":(\d{2,5})(?:/|$)", raw) or re.search(
             r"\bport\s+(\d{2,5})\b",
-            raw_project_url,
+            raw,
             re.IGNORECASE,
         )
         if match:
-            port = int(match.group(1))
+            return int(match.group(1))
+    return None
 
-    netloc = preferred.hostname
-    if port:
-        netloc = f"{netloc}:{port}"
 
-    return urlunparse((
-        preferred.scheme or current.scheme or "http",
-        netloc,
-        "/",
-        "",
-        "",
-        "",
-    ))
+def _build_project_url(
+    *,
+    preferred_network_host: str | None,
+    port: int | None,
+    fallback_url: str | None = None,
+) -> str | None:
+    normalized_host = _normalize_network_host(preferred_network_host)
+    if normalized_host:
+        preferred = urlparse(normalized_host)
+        if preferred.hostname:
+            resolved_port = port or preferred.port
+            netloc = preferred.hostname
+            if resolved_port:
+                netloc = f"{netloc}:{resolved_port}"
+            return urlunparse((
+                preferred.scheme or "http",
+                netloc,
+                "/",
+                "",
+                "",
+                "",
+            ))
+
+    return fallback_url
 
 
 def _connection_help_message(openclaw_url: str) -> str:
@@ -189,13 +200,15 @@ async def execute_coding_job(
             f"7. For website or landing-page visuals, use Gemini Nano Banana or ChatGPT image "
             f"generation/editing tools when needed to create polished custom visuals instead of "
             f"shipping with bland placeholders.\n"
-            f"8. The user wants the shared URL to use this host/domain when possible: "
+            f"8. The user wants the shared URL to use this host/domain: "
             f"{preferred_network_host or 'use the machine host you actually start on'}.\n"
-            f"9. Reply with ONLY these two lines (no extra explanation):\n"
+            f"9. IMPORTANT: do NOT return your own machine hostname or a full URL. "
+            f"Return only the runtime port.\n"
+            f"10. Reply with ONLY these lines (no extra explanation):\n"
             f"   PATH: <exact absolute path to the project folder>\n"
-            f"   URL: <exact URL where the running app is reachable>\n"
-            f"   If the app is still using the same URL, return the current URL.\n"
-            f"   If deployment failed, omit the URL line and only include PATH."
+            f"   PORT: <port where the running app is reachable>\n"
+            f"   If the app is still using the same port, return the current port.\n"
+            f"   If deployment failed, omit the PORT line and only include PATH."
         )
     else:
         prompt = (
@@ -211,12 +224,14 @@ async def execute_coding_job(
             f"5. For website or landing-page visuals, use Gemini Nano Banana or ChatGPT image "
             f"generation/editing tools when needed to create polished custom visuals instead of "
             f"shipping with bland placeholders.\n"
-            f"6. The user wants the shared URL to use this host/domain when possible: "
+            f"6. The user wants the shared URL to use this host/domain: "
             f"{preferred_network_host or 'use the machine host you actually start on'}.\n"
-            f"7. Reply with ONLY these two lines (no extra explanation):\n"
+            f"7. IMPORTANT: do NOT return your own machine hostname or a full URL. "
+            f"Return only the runtime port.\n"
+            f"8. Reply with ONLY these lines (no extra explanation):\n"
             f"   PATH: <exact absolute path to the project folder>\n"
-            f"   URL: <exact URL where the running app is reachable>\n"
-            f"   If nginx deployment failed, omit the URL line and only include PATH."
+            f"   PORT: <port where the running app is reachable>\n"
+            f"   If deployment failed, omit the PORT line and only include PATH."
         )
 
     request_body: dict = {
@@ -299,19 +314,29 @@ async def execute_coding_job(
     )
 
     project_path = existing_project_path
-    project_url = existing_project_url
+    raw_project_url = existing_project_url
+    project_port = _extract_runtime_port(existing_project_url)
     for line in full_text.splitlines():
         line = line.strip()
         if line.startswith("PATH:"):
             project_path = line[5:].strip()
+        elif line.startswith("PORT:"):
+            port_match = re.search(r"\d{2,5}", line[5:])
+            if port_match:
+                project_port = int(port_match.group(0))
         elif line.startswith("URL:"):
-            project_url = line[4:].strip()
+            raw_project_url = line[4:].strip()
+            project_port = _extract_runtime_port(raw_project_url, line)
 
-    project_url = _rewrite_project_url(project_url, preferred_network_host)
+    project_url = _build_project_url(
+        preferred_network_host=preferred_network_host,
+        port=project_port,
+        fallback_url=raw_project_url,
+    )
 
     logger.info(
         f"[{conversation_id}] OpenClaw job {job_id} result "
-        f"path={project_path} url={project_url}"
+        f"path={project_path} port={project_port} url={project_url}"
     )
 
     artifacts = []

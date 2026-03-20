@@ -85,7 +85,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.spectalk.app.device.ConnectedDeviceMonitor
 import com.spectalk.app.device.MetaWearablesAccessManager
 import com.spectalk.app.ui.components.PrdConfirmationCard
@@ -98,7 +97,7 @@ import kotlinx.coroutines.launch
 fun VoiceSessionScreen(
     conversationId: String?,
     onNavigateBack: () -> Unit,
-    viewModel: VoiceAgentViewModel = viewModel(),
+    viewModel: VoiceAgentViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val deviceState by ConnectedDeviceMonitor.state.collectAsStateWithLifecycle()
@@ -264,10 +263,7 @@ fun VoiceSessionScreen(
                         .padding(horizontal = 4.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(onClick = {
-                        viewModel.disconnect()
-                        onNavigateBack()
-                    }) {
+                    IconButton(onClick = onNavigateBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",

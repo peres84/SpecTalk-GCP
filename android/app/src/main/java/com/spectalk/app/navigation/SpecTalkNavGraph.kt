@@ -1,5 +1,6 @@
 package com.spectalk.app.navigation
 
+import androidx.activity.ComponentActivity
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
@@ -32,6 +33,7 @@ import com.spectalk.app.ui.screens.SettingsScreen
 import com.spectalk.app.ui.screens.SplashScreen
 import com.spectalk.app.ui.screens.TutorialScreen
 import com.spectalk.app.ui.screens.VoiceSessionScreen
+import com.spectalk.app.voice.VoiceAgentViewModel
 import kotlinx.coroutines.launch
 
 @Composable
@@ -40,6 +42,8 @@ fun SpecTalkNavGraph() {
     val authViewModel: AuthViewModel = viewModel()
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val activity = context as ComponentActivity
+    val voiceAgentViewModel: VoiceAgentViewModel = viewModel(viewModelStoreOwner = activity)
     val scope = rememberCoroutineScope()
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -169,6 +173,7 @@ fun SpecTalkNavGraph() {
                 SettingsScreen(
                     onNavigateBack = { navController.popBackStack() },
                     onSignOut = {
+                        voiceAgentViewModel.disconnect()
                         authViewModel.signOut()
                         navController.navigate(Screen.Login.route) {
                             popUpTo(Screen.Home.route) { inclusive = true }
@@ -191,6 +196,7 @@ fun SpecTalkNavGraph() {
                 VoiceSessionScreen(
                     conversationId = conversationId,
                     onNavigateBack = { navController.popBackStack() },
+                    viewModel = voiceAgentViewModel,
                 )
             }
         }
@@ -243,6 +249,7 @@ fun SpecTalkNavGraph() {
                     },
                     onSignOut = {
                         closeDrawer()
+                        voiceAgentViewModel.disconnect()
                         authViewModel.signOut()
                         navController.navigate(Screen.Login.route) {
                             popUpTo(Screen.Home.route) { inclusive = true }

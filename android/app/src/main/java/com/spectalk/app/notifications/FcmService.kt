@@ -13,6 +13,7 @@ import com.spectalk.app.R
 import com.spectalk.app.SpecTalkApplication
 import com.spectalk.app.device.ConnectedDeviceMonitor
 import com.spectalk.app.settings.AppPreferences
+import com.spectalk.app.voice.VoiceSessionCommandBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -93,7 +94,8 @@ class FcmService : FirebaseMessagingService() {
         //   • startActivity       → brings app to foreground if backgrounded, then onNewIntent
         //                           re-emits the id (singleTop — no duplicate Activity created)
         // The notification is still shown so the user can reference or dismiss it.
-        val shouldAutoResume = ConnectedDeviceMonitor.state.value.isWakeWordReady ||
+        val hasWearableRoute = ConnectedDeviceMonitor.state.value.isWakeWordReady
+        val shouldAutoResume = hasWearableRoute ||
             AppPreferences.isAutoOpenOnNotification(this)
         if (shouldAutoResume) {
             // Store in SharedPreferences first so the navigation survives background
@@ -102,12 +104,19 @@ class FcmService : FirebaseMessagingService() {
             // reads and clears this value and navigates to the conversation.
             AppPreferences.setPendingAutoOpenConversationId(this, conversationId)
             NotificationEventBus.emitConversationId(conversationId)
-            val autoIntent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra(MainActivity.EXTRA_CONVERSATION_ID, conversationId)
+            if (hasWearableRoute) {
+                // Keep the phone screen out of the way when a wearable route is active.
+                // The shared voice session should resume/switch in-process and speak
+                // through the connected glasses / earbuds without forcing the UI open.
+                VoiceSessionCommandBus.requestResume(conversationId)
+            } else {
+                val autoIntent = Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra(MainActivity.EXTRA_CONVERSATION_ID, conversationId)
+                }
+                runCatching { startActivity(autoIntent) }
+                    .onFailure { e -> Log.w(TAG, "Auto-open: could not start activity: ${e.message}") }
             }
-            runCatching { startActivity(autoIntent) }
-                .onFailure { e -> Log.w(TAG, "Auto-open: could not start activity: ${e.message}") }
         }
     }
 

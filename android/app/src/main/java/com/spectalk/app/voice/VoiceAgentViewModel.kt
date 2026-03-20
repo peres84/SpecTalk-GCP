@@ -50,7 +50,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     private var connectTimeoutJob: Job? = null
     private var inactivityJob: Job? = null
     private var glassesSessionStarted = false
-    private var backgroundStopJob: Job? = null
+    @Volatile private var isChatScreenForeground = false
 
     // Tracks whether we've sent ack-resume-event for the current session.
     // Reset on each new session so the ack fires exactly once per reconnect.
@@ -78,6 +78,24 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
 
         viewModelScope.launch {
             HotwordEventBus.wakeWordDetected.collect { startSession() }
+        }
+
+        viewModelScope.launch {
+            VoiceSessionCommandBus.resumeRequests.collect { conversationId ->
+                if (!ConnectedDeviceMonitor.state.value.isWakeWordReady) {
+                    Log.i(
+                        TAG,
+                        "Ignoring notification resume for $conversationId - no wearable audio route is active.",
+                    )
+                    return@collect
+                }
+
+                Log.i(
+                    TAG,
+                    "Notification requested wearable voice resume for conversation $conversationId",
+                )
+                resumeConversationFromNotification(conversationId)
+            }
         }
 
         if (HotwordEventBus.consumePendingWakeWord()) {
@@ -201,8 +219,6 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     fun disconnect(resumeHotword: Boolean = true) {
         if (resumeHotword) HotwordEventBus.resume()
         cancelTimers()
-        backgroundStopJob?.cancel()
-        backgroundStopJob = null
         stopMicrophone(sendEndOfSpeech = true)
         clientEventsJob?.cancel()
         clientEventsJob = null
@@ -233,36 +249,50 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         startSession(_uiState.value.conversationId)
     }
 
+    fun resumeConversationFromNotification(conversationId: String) {
+        if (!ConnectedDeviceMonitor.state.value.isWakeWordReady) {
+            Log.i(
+                TAG,
+                "Skipping notification resume for $conversationId because no wearable route is active.",
+            )
+            return
+        }
+
+        val currentConversationId = _uiState.value.conversationId
+        val sameConversation =
+            currentConversationId != null &&
+                currentConversationId == conversationId &&
+                (_uiState.value.isConnected || _uiState.value.isConnecting)
+
+        if (sameConversation) {
+            Log.i(
+                TAG,
+                "Notification resume matches the active conversation - reconnecting to fetch the finished job result.",
+            )
+            disconnect(resumeHotword = false)
+        }
+
+        startSession(conversationId)
+    }
+
     fun onChatScreenStarted() {
-        backgroundStopJob?.cancel()
-        backgroundStopJob = null
+        isChatScreenForeground = true
     }
 
     fun onChatScreenInactive() {
+        isChatScreenForeground = false
         if (!(_uiState.value.isConnected || _uiState.value.isConnecting)) return
 
-        backgroundStopJob?.cancel()
-        backgroundStopJob = if (_uiState.value.isWakeWordDeviceConnected) {
-            viewModelScope.launch {
-                delay(INACTIVITY_TIMEOUT_MS)
-                if (_uiState.value.isConnected || _uiState.value.isConnecting) {
-                    Log.i(TAG, "Chat inactive for 20s with wearable audio â€” ending voice session.")
-                    disconnect()
-                }
-            }
+        if (!canContinueSessionInBackground()) {
+            Log.i(TAG, "Chat screen inactive without wearable voice mode - ending voice session.")
+            disconnect()
         } else {
-            viewModelScope.launch {
-                Log.i(TAG, "Chat screen no longer active â€” ending voice session.")
-                disconnect()
-            }
+            Log.i(TAG, "Chat screen inactive - keeping wearable voice session alive until inactivity timeout.")
         }
     }
 
     fun onChatScreenStopped() {
-        if (_uiState.value.isConnected || _uiState.value.isConnecting) {
-            Log.i(TAG, "Chat screen no longer active — ending voice session.")
-            disconnect()
-        }
+        onChatScreenInactive()
     }
 
     fun setDraftText(text: String) {
@@ -635,8 +665,6 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         inactivityJob = null
         connectTimeoutJob?.cancel()
         connectTimeoutJob = null
-        backgroundStopJob?.cancel()
-        backgroundStopJob = null
     }
 
     private fun cancelInactivityOnly() {
@@ -684,6 +712,13 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 _uiState.update { it.copy(isWakeWordDeviceConnected = state.isWakeWordReady) }
                 syncGlassesCameraSession(state.hasMetaWearable)
                 syncSessionCapabilities()
+                if (!isChatScreenForeground &&
+                    (_uiState.value.isConnected || _uiState.value.isConnecting) &&
+                    !canContinueSessionInBackground()
+                ) {
+                    Log.i(TAG, "Wearable audio unavailable while app is backgrounded - ending voice session.")
+                    disconnect()
+                }
             }
         }
     }
@@ -738,6 +773,11 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             listeningEnabled = _uiState.value.isListeningEnabled,
         )
     }
+
+    private fun canContinueSessionInBackground(): Boolean =
+        _uiState.value.isConnected &&
+            _uiState.value.isListeningEnabled &&
+            _uiState.value.isWakeWordDeviceConnected
 
     private fun isGlassesCaptureAvailable(): Boolean =
         ConnectedDeviceMonitor.state.value.hasMetaWearable &&
@@ -1049,3 +1089,4 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         super.onCleared()
     }
 }
+
