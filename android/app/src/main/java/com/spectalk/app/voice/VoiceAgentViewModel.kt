@@ -17,6 +17,7 @@ import com.spectalk.app.conversations.ConversationRepository
 import com.spectalk.app.device.CaptureResult
 import com.spectalk.app.device.ConnectedDeviceMonitor
 import com.spectalk.app.device.GlassesCameraManager
+import com.spectalk.app.device.MetaWearablesAccessManager
 import com.spectalk.app.gallery.GalleryRepository
 import com.spectalk.app.hotword.HotwordEventBus
 import com.spectalk.app.location.UserLocationContext
@@ -72,6 +73,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     init {
         initActivationSound()
         observeConnectedDevices()
+        observeMetaWearablesAccess()
         observeGlassesCameraReadiness()
 
         viewModelScope.launch {
@@ -84,7 +86,11 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun startSession(conversationId: String? = null) {
-        if (_uiState.value.isConnecting || _uiState.value.isConnected) return
+        val currentConversationId = _uiState.value.conversationId
+        val switchingConversation = conversationId != currentConversationId
+        if ((_uiState.value.isConnecting || _uiState.value.isConnected) && !switchingConversation) {
+            return
+        }
 
         HotwordEventBus.isPaused.value = true
         disconnect(resumeHotword = false)
@@ -159,6 +165,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                     statusMessage = "Connecting to Gervis...",
                     conversationId = resolvedConversationId,
                     draftText = "",
+                    isMetaRegistered = MetaWearablesAccessManager.state.value.isRegistered,
+                    hasMetaCameraPermission = MetaWearablesAccessManager.state.value.hasCameraPermission,
                 )
             }
 
@@ -215,6 +223,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 isAudioPlaybackEnabled = true,
                 statusMessage = "Disconnected",
                 isGlassesCameraReady = false,
+                isMetaRegistered = MetaWearablesAccessManager.state.value.isRegistered,
+                hasMetaCameraPermission = MetaWearablesAccessManager.state.value.hasCameraPermission,
             )
         }
     }
@@ -467,6 +477,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 if (event.source == "glasses" &&
                     _uiState.value.isConnected &&
                     _uiState.value.isListeningEnabled &&
+                    _uiState.value.isMetaRegistered &&
+                    _uiState.value.hasMetaCameraPermission &&
                     _uiState.value.isGlassesCameraReady
                 ) {
                     sendGlassesFrame(requestedByAgent = true)
@@ -475,6 +487,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                         when {
                             !_uiState.value.isConnected -> "No active voice session"
                             !_uiState.value.isListeningEnabled -> "Listening mode is turned off"
+                            !_uiState.value.isMetaRegistered -> "Meta glasses are not connected to SpecTalk"
+                            !_uiState.value.hasMetaCameraPermission -> "Meta camera permission has not been granted"
                             !_uiState.value.isGlassesCameraReady -> "Meta glasses camera is not ready"
                             else -> "Automatic glasses capture is unavailable"
                         }
@@ -680,6 +694,20 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    private fun observeMetaWearablesAccess() {
+        viewModelScope.launch {
+            MetaWearablesAccessManager.state.collect { accessState ->
+                _uiState.update {
+                    it.copy(
+                        isMetaRegistered = accessState.isRegistered,
+                        hasMetaCameraPermission = accessState.hasCameraPermission,
+                    )
+                }
+                syncGlassesCameraSession(ConnectedDeviceMonitor.state.value.hasMetaWearable)
+            }
+        }
+    }
+
     private fun observeGlassesCameraReadiness() {
         viewModelScope.launch {
             GlassesCameraManager.isReady.collect { ready ->
@@ -690,7 +718,12 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun syncGlassesCameraSession(hasMetaWearable: Boolean) {
-        if ((_uiState.value.isConnected || _uiState.value.isConnecting) && hasMetaWearable) {
+        val accessState = MetaWearablesAccessManager.state.value
+        if (
+            (_uiState.value.isConnected || _uiState.value.isConnecting) &&
+            hasMetaWearable &&
+            accessState.canUseCamera
+        ) {
             if (!glassesSessionStarted) {
                 GlassesCameraManager.startSession(getApplication())
                 glassesSessionStarted = true
@@ -867,6 +900,16 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
 
     fun sendGlassesFrame(requestedByAgent: Boolean = false) {
         val client = backendClient ?: return
+        if (!_uiState.value.isMetaRegistered) {
+            setError("Meta glasses are not connected to SpecTalk yet.")
+            client.sendVisualCaptureFailure("Meta glasses are not connected to SpecTalk")
+            return
+        }
+        if (!_uiState.value.hasMetaCameraPermission) {
+            setError("Meta camera permission has not been granted yet.")
+            client.sendVisualCaptureFailure("Meta camera permission has not been granted")
+            return
+        }
         viewModelScope.launch {
             when (val result = GlassesCameraManager.capturePhoto()) {
                 is CaptureResult.Success -> {

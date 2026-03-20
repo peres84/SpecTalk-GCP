@@ -86,6 +86,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.spectalk.app.device.ConnectedDeviceMonitor
+import com.spectalk.app.device.MetaWearablesAccessManager
 import com.spectalk.app.ui.components.PrdConfirmationCard
 import com.spectalk.app.voice.ConversationTurn
 import com.spectalk.app.voice.VoiceAgentViewModel
@@ -99,8 +101,11 @@ fun VoiceSessionScreen(
     viewModel: VoiceAgentViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val deviceState by ConnectedDeviceMonitor.state.collectAsStateWithLifecycle()
+    val metaAccessState by MetaWearablesAccessManager.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val activity = context as? Activity
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     var pendingPhoneCameraLaunch by remember { mutableStateOf(false) }
@@ -144,12 +149,61 @@ fun VoiceSessionScreen(
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
+
     val sendImageFromBestSource = {
-        if (uiState.isConnected && uiState.isGlassesCameraReady) {
+        if (deviceState.hasMetaWearable) {
+            when {
+                !metaAccessState.isRegistered -> {
+                    if (activity != null) {
+                        MetaWearablesAccessManager.startRegistration(activity)
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                "Finish connecting SpecTalk in the Meta AI app, then try again."
+                            )
+                        }
+                    } else {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                "Open the app again to finish Meta glasses setup."
+                            )
+                        }
+                    }
+                }
+                !metaAccessState.hasCameraPermission -> {
+                    scope.launch {
+                        val granted = MetaWearablesAccessManager.requestCameraPermission()
+                        if (!granted) {
+                            snackbarHostState.showSnackbar(
+                                "Meta camera permission is required before SpecTalk can capture."
+                            )
+                        }
+                    }
+                }
+                uiState.isConnected && uiState.isGlassesCameraReady -> {
+                    viewModel.sendGlassesFrame()
+                }
+                else -> {
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            "Meta glasses camera is still getting ready. Please try again in a moment."
+                        )
+                    }
+                }
+            }
+        } else if (uiState.isConnected && uiState.isGlassesCameraReady) {
             viewModel.sendGlassesFrame()
         } else {
             launchPhoneCamera()
         }
+    }
+
+    val metaSetupMessage = when {
+        !deviceState.hasMetaWearable -> null
+        !metaAccessState.isRegistered ->
+            "Connect SpecTalk in the Meta AI app before trying to capture from glasses."
+        !metaAccessState.hasCameraPermission ->
+            "Grant Meta camera permission so Gervis can capture from your glasses."
+        else -> null
     }
 
     LaunchedEffect(conversationId) { viewModel.startSession(conversationId) }
@@ -161,8 +215,14 @@ fun VoiceSessionScreen(
         }
     }
 
+    LaunchedEffect(metaAccessState.recentError) {
+        metaAccessState.recentError?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            MetaWearablesAccessManager.clearRecentError()
+        }
+    }
+
     DisposableEffect(lifecycleOwner, context) {
-        val activity = context as? Activity
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> viewModel.onChatScreenStarted()
@@ -259,6 +319,9 @@ fun VoiceSessionScreen(
                     )
 
                     val subtitle = when {
+                        metaSetupMessage != null ->
+                            metaSetupMessage
+
                         uiState.conversationState == "coding_mode" ->
                             "Gervis is designing your project..."
 
@@ -285,6 +348,39 @@ fun VoiceSessionScreen(
                     Spacer(Modifier.height(12.dp))
                 } else {
                     Spacer(Modifier.height(4.dp))
+                }
+
+                if (deviceState.hasMetaWearable && metaSetupMessage != null) {
+                    MetaSetupCard(
+                        isRegistered = metaAccessState.isRegistered,
+                        registrationLabel = metaAccessState.registrationLabel,
+                        hasCameraPermission = metaAccessState.hasCameraPermission,
+                        isPermissionBusy = metaAccessState.isPermissionRequestInFlight,
+                        onConnect = {
+                            if (activity != null) {
+                                MetaWearablesAccessManager.startRegistration(activity)
+                            } else {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        "Open the app again to connect Meta glasses."
+                                    )
+                                }
+                            }
+                        },
+                        onGrantCamera = {
+                            scope.launch {
+                                val granted = MetaWearablesAccessManager.requestCameraPermission()
+                                if (!granted) {
+                                    snackbarHostState.showSnackbar(
+                                        "Meta camera permission was not granted."
+                                    )
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
                 }
 
                 TranscriptArea(
@@ -596,6 +692,78 @@ private fun SessionPrimaryAction(
                 MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
             },
         )
+    }
+}
+
+@Composable
+private fun MetaSetupCard(
+    isRegistered: Boolean,
+    registrationLabel: String,
+    hasCameraPermission: Boolean,
+    isPermissionBusy: Boolean,
+    onConnect: () -> Unit,
+    onGrantCamera: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(22.dp),
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = "Meta glasses setup",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = registrationLabel,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+        )
+        Text(
+            text = if (hasCameraPermission) {
+                "Meta camera access granted."
+            } else {
+                "Grant Meta camera access so SpecTalk can capture and send your glasses view."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedButton(onClick = onConnect, shape = RoundedCornerShape(14.dp)) {
+                Text("Connect")
+            }
+            OutlinedButton(
+                onClick = onGrantCamera,
+                enabled = isRegistered && !hasCameraPermission && !isPermissionBusy,
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                if (isPermissionBusy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Text(
+                        when {
+                            hasCameraPermission -> "Granted"
+                            !isRegistered -> "Connect first"
+                            else -> "Grant camera"
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -951,6 +1119,7 @@ private fun TurnBubble(turn: ConversationTurn) {
 private fun sessionModeLabel(uiState: VoiceSessionUiState): String = when {
     uiState.isConnected && !uiState.isListeningEnabled -> "Text mode"
     uiState.isGlassesCameraReady -> "Meta camera ready"
+    uiState.isMetaRegistered && !uiState.hasMetaCameraPermission -> "Grant Meta camera access"
     uiState.isConnected && !uiState.isWakeWordDeviceConnected -> "Phone mic + speaker"
     uiState.isWakeWordDeviceConnected -> "Wearable audio"
     else -> "Voice session"

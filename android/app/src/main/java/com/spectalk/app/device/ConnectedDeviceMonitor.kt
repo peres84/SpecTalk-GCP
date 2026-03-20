@@ -15,6 +15,7 @@ import android.media.AudioManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.meta.wearable.dat.core.Wearables
+import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +46,7 @@ object ConnectedDeviceMonitor {
     private const val TAG = "ConnectedDeviceMonitor"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val metaDeviceSelector = AutoDeviceSelector()
     private val _state = MutableStateFlow(ConnectedDeviceState())
     val state: StateFlow<ConnectedDeviceState> = _state.asStateFlow()
 
@@ -149,9 +151,9 @@ object ConnectedDeviceMonitor {
     private fun observeMetaWearables() {
         scope.launch {
             runCatching {
-                Wearables.devices.collect { devices ->
+                metaDeviceSelector.activeDevice(Wearables.devices).collect { device ->
                     _state.update { current ->
-                        current.copy(hasMetaWearable = devices.isNotEmpty())
+                        current.copy(hasMetaWearable = device != null)
                     }
                 }
             }.onFailure { e ->

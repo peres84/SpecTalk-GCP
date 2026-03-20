@@ -38,4 +38,8 @@ data class VoiceSessionUiState(
     val prdSummary: PrdSummary? = null,
     /** True when the Meta glasses StreamSession is STREAMING and a photo can be captured. */
     val isGlassesCameraReady: Boolean = false,
+    /** True when the DAT app registration with Meta AI has completed. */
+    val isMetaRegistered: Boolean = false,
+    /** True when wearable-side DAT camera permission has been granted. */
+    val hasMetaCameraPermission: Boolean = false,
 )

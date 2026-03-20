@@ -128,6 +128,7 @@ async def generate_and_confirm_prd(
     # Store in ADK session state so confirm_and_dispatch can retrieve it
     state["pending_prd"] = prd
     existing_project = state.get("selected_project")
+    preferred_network_host = state.get("preferred_network_host")
 
     # Build a natural spoken summary
     features_spoken = ", ".join(prd.get("key_features", [])[:3])
@@ -159,6 +160,7 @@ async def generate_and_confirm_prd(
                     payload={
                         "prd": prd,
                         "existing_project": existing_project,
+                        "preferred_network_host": preferred_network_host,
                     },
                     status="pending",
                     description=f"Build project: {prd.get('project_name', 'unknown')}",
@@ -223,6 +225,7 @@ async def confirm_and_dispatch(
 
     # Find the most recent pending action for this conversation
     pending_action_id: uuid.UUID | None = None
+    pending_action_payload: dict | None = None
     if conversation_id:
         try:
             async with AsyncSessionLocal() as db_session:
@@ -239,13 +242,17 @@ async def confirm_and_dispatch(
                 pa = result.scalar_one_or_none()
                 if pa:
                     pending_action_id = pa.id
+                    pending_action_payload = pa.payload or {}
         except Exception as e:
             logger.warning(f"[{conversation_id}] Could not fetch PendingAction: {e}")
 
     if confirmed:
         prd = state.get("pending_prd", {})
         existing_project = state.get("selected_project")
-        preferred_network_host = state.get("preferred_network_host")
+        preferred_network_host = (
+            state.get("preferred_network_host")
+            or (pending_action_payload or {}).get("preferred_network_host")
+        )
         project_name = prd.get("project_name", "your project")
 
         active_job = await get_active_job_for_conversation(conversation_id, "coding")

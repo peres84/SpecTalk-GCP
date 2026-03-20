@@ -15,6 +15,7 @@ so OpenClaw keeps the existing coding context.
 
 import json
 import logging
+import re
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -47,12 +48,22 @@ def _rewrite_project_url(project_url: str | None, preferred_network_host: str | 
     if not normalized_host:
         return project_url
 
-    current = urlparse(project_url if "://" in project_url else f"http://{project_url}")
+    raw_project_url = project_url.strip()
+    current = urlparse(raw_project_url if "://" in raw_project_url else f"http://{raw_project_url}")
     preferred = urlparse(normalized_host)
-    if not current.hostname or not preferred.hostname:
+    if not preferred.hostname:
         return project_url
 
     port = current.port or preferred.port
+    if port is None:
+        match = re.search(r":(\d{2,5})(?:/|$)", raw_project_url) or re.search(
+            r"\bport\s+(\d{2,5})\b",
+            raw_project_url,
+            re.IGNORECASE,
+        )
+        if match:
+            port = int(match.group(1))
+
     netloc = preferred.hostname
     if port:
         netloc = f"{netloc}:{port}"

@@ -1,6 +1,7 @@
 package com.spectalk.app.ui.screens
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -66,6 +67,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.spectalk.app.SpecTalkApplication
 import com.spectalk.app.device.ConnectedDeviceMonitor
+import com.spectalk.app.device.MetaWearablesAccessManager
 import com.spectalk.app.integrations.IntegrationItem
 import com.spectalk.app.integrations.IntegrationsRepository
 import com.spectalk.app.integrations.SaveResult
@@ -80,9 +82,11 @@ fun SettingsScreen(
     onSignOut: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val activity = context as? Activity
     val scope = rememberCoroutineScope()
     val locationRepository = remember { UserLocationRepository(context) }
     val deviceState by ConnectedDeviceMonitor.state.collectAsStateWithLifecycle()
+    val metaAccessState by MetaWearablesAccessManager.state.collectAsStateWithLifecycle()
     val tokenRepository = remember { (context.applicationContext as SpecTalkApplication).tokenRepository }
     val integrationsRepository = remember { IntegrationsRepository() }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -101,6 +105,12 @@ fun SettingsScreen(
     }
 
     LaunchedEffect(Unit) { reloadIntegrations() }
+    LaunchedEffect(metaAccessState.recentError) {
+        metaAccessState.recentError?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            MetaWearablesAccessManager.clearRecentError()
+        }
+    }
 
     var wakeWord by remember { mutableStateOf(AppPreferences.getWakeWord(context)) }
     var locationSharingEnabled by remember {
@@ -247,37 +257,136 @@ fun SettingsScreen(
 
             // ── Devices ───────────────────────────────────────────────────────
             SettingsGroup(title = "Devices") {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (deviceState.isWakeWordReady) MaterialTheme.colorScheme.secondary
-                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                            ),
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(
-                            text = deviceState.primaryDeviceLabel ?: "No device connected",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (deviceState.isWakeWordReady) MaterialTheme.colorScheme.secondary
+                                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                ),
                         )
-                        Text(
-                            text = if (deviceState.isWakeWordReady)
-                                "Connected — wake word active"
-                            else
-                                "Connect Meta glasses or a Bluetooth audio device",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                text = deviceState.primaryDeviceLabel ?: "No device connected",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = if (deviceState.isWakeWordReady)
+                                    "Connected — wake word active"
+                                else
+                                    "Connect Meta glasses or a Bluetooth audio device",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Text(
+                                text = "Meta glasses access",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                text = metaAccessState.registrationLabel,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                            )
+                            Text(
+                                text = if (metaAccessState.hasCameraPermission) {
+                                    "Meta camera permission granted."
+                                } else {
+                                    "Grant Meta camera permission so SpecTalk can capture from your glasses."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Button(
+                                    onClick = {
+                                        if (activity != null) {
+                                            MetaWearablesAccessManager.startRegistration(activity)
+                                        } else {
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    "Open the app again to connect Meta glasses."
+                                                )
+                                            }
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                ) {
+                                    Text(if (metaAccessState.isRegistered) "Reconnect" else "Connect")
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            val granted = MetaWearablesAccessManager.requestCameraPermission()
+                                            if (!granted) {
+                                                snackbarHostState.showSnackbar(
+                                                    "Meta camera permission was not granted."
+                                                )
+                                            }
+                                        }
+                                    },
+                                    enabled = metaAccessState.isRegistered &&
+                                        !metaAccessState.hasCameraPermission &&
+                                        !metaAccessState.isPermissionRequestInFlight,
+                                    shape = RoundedCornerShape(10.dp),
+                                ) {
+                                    if (metaAccessState.isPermissionRequestInFlight) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                    } else {
+                                        Text(
+                                            when {
+                                                metaAccessState.hasCameraPermission -> "Granted"
+                                                !metaAccessState.isRegistered -> "Connect first"
+                                                else -> "Grant camera"
+                                            }
+                                        )
+                                    }
+                                }
+                                if (metaAccessState.isRegistered && activity != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            MetaWearablesAccessManager.startUnregistration(activity)
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            contentColor = MaterialTheme.colorScheme.error,
+                                        ),
+                                    ) {
+                                        Text("Disconnect")
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

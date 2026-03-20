@@ -41,13 +41,19 @@ class PcmAudioPlayer(context: Context) {
         configureRoute(preferSpeaker)
 
         val minBufferSize = AudioTrack.getMinBufferSize(SAMPLE_RATE_HZ, CHANNEL_MASK, AUDIO_FORMAT)
+        val playbackAttributes = AudioAttributes.Builder()
+            // Use MEDIA so Android screen recorders / playback-capture APIs can
+            // include Gervis's spoken output as internal app audio.
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    setAllowedCapturePolicy(AudioAttributes.ALLOW_CAPTURE_BY_ALL)
+                }
+            }
+            .build()
         val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build(),
-            )
+            .setAudioAttributes(playbackAttributes)
             .setAudioFormat(
                 AudioFormat.Builder()
                     .setSampleRate(SAMPLE_RATE_HZ)

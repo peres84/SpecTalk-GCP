@@ -11,22 +11,21 @@ import com.meta.wearable.dat.camera.types.StreamSessionState
 import com.meta.wearable.dat.camera.types.VideoQuality
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
 import okio.ByteString
 
-// Result of a photo capture attempt
 sealed interface CaptureResult {
     data class Success(val jpegBytes: ByteArray) : CaptureResult
     data class Failure(val reason: String) : CaptureResult
@@ -43,15 +42,14 @@ object GlassesCameraManager {
     private val _isReady = MutableStateFlow(false)
     val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
 
-    // Call once when a voice session starts and glasses are connected.
     fun startSession(context: Context) {
         if (session != null) return
         val newSession = Wearables.startStreamSession(
             context = context,
             deviceSelector = AutoDeviceSelector(),
             streamConfiguration = StreamConfiguration(
-                videoQuality = VideoQuality.LOW,  // 360x640 — best quality over BT
-                frameRate = 2,                    // minimal frames; we only need stills
+                videoQuality = VideoQuality.MEDIUM,
+                frameRate = 24,
             ),
         )
         session = newSession
@@ -65,8 +63,6 @@ object GlassesCameraManager {
             }
         }
 
-        // Keep the DAT video stream actively collected so the session can transition
-        // all the way to STREAMING and remain warm for still-photo capture.
         warmStreamJob?.cancel()
         warmStreamJob = scope.launch {
             runCatching {
@@ -77,10 +73,8 @@ object GlassesCameraManager {
         }
     }
 
-    // Capture a still photo from the DAT SDK rather than trying to convert
-    // an arbitrary streamed frame into a JPEG ourselves.
     suspend fun capturePhoto(): CaptureResult {
-        val s = session ?: return CaptureResult.Failure("No active stream session")
+        val activeSession = session ?: return CaptureResult.Failure("No active stream session")
         if (!_isReady.value) {
             Log.i(TAG, "capturePhoto waiting for stream readiness")
             val ready = withTimeoutOrNull(READY_TIMEOUT_MS) {
@@ -91,10 +85,10 @@ object GlassesCameraManager {
             }
         }
         return try {
-            s.capturePhoto().fold(
+            activeSession.capturePhoto().fold(
                 onSuccess = { photoData ->
                     val bytes = photoData.toByteArray()
-                    if (bytes.size == 0) {
+                    if (bytes.isEmpty()) {
                         CaptureResult.Failure("Glasses returned an empty photo")
                     } else {
                         Log.i(TAG, "capturePhoto succeeded (${bytes.size} bytes)")
@@ -108,7 +102,7 @@ object GlassesCameraManager {
                 },
             )
         } catch (e: Exception) {
-            Log.w(TAG, "capturePhoto failed: ${e.message}")
+            Log.w(TAG, "capturePhoto failed: ${e.message}", e)
             CaptureResult.Failure(e.message ?: "Capture failed")
         }
     }
@@ -127,7 +121,7 @@ object GlassesCameraManager {
             ByteArray(buffer.remaining()).also { buffer.get(it) }
         }
         else -> throw IllegalStateException(
-            "Unsupported Meta photo data type: ${raw::class.java.name}"
+            "Unsupported Meta photo data type: ${raw::class.java.name}",
         )
     }
 
@@ -142,7 +136,7 @@ object GlassesCameraManager {
         stateJob = null
         warmStreamJob?.cancel()
         warmStreamJob = null
-        session?.close()  // close() is the lifecycle-ending call; there is no stop()
+        session?.close()
         session = null
         _isReady.value = false
         Log.i(TAG, "StreamSession stopped")
