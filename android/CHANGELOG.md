@@ -5,6 +5,34 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — Fix wake notification sound + live wake word settings
+
+### Fixed
+
+#### [A-1] Wake notification plays OS sound at wrong time (premature chime)
+- **Root cause**: `postWakeNotification()` used `NotificationManager.IMPORTANCE_HIGH` on the
+  `hotword_wake_channel` channel. Android plays the channel's default notification sound
+  immediately when the notification is posted — at wake-word detection time — before Gervis
+  is connected. This produced two sounds: one premature OS chime and one correct activation
+  beep when the WebSocket connected.
+- **Fix**: Changed channel importance to `IMPORTANCE_LOW` (silent, no heads-up) so the
+  notification only provides the full-screen intent / screen-wake behaviour it is actually
+  needed for. New channel ID `hotword_wake_v2` forces channel recreation on existing installs
+  (Android locks channel settings after first creation). Also removed `CATEGORY_CALL` from
+  the notification builder to prevent OEM-specific extra audio routing.
+
+#### [A-2] Wake word setting change has no effect until app restart
+- **Root cause**: `updateListeningState()` had an `if (speechService == null)` guard that
+  prevented `startListening()` from running when Vosk was already active. Since
+  `startListening()` is where the Vosk grammar is rebuilt from SharedPreferences, changing
+  the wake word in Settings had no effect while the service was running.
+- **Fix**: Removed the guard. `startListening()` already calls `speechService?.stop()` as
+  its first line, so calling it unconditionally safely restarts the recognizer with the
+  current configured word on every state update (settings save, session end, HomeScreen
+  entry).
+
+---
+
 ## [Unreleased] — Fix wake word false positives
 
 ### Fixed

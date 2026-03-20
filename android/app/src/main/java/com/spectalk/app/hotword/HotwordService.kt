@@ -54,7 +54,7 @@ class HotwordService : Service(), RecognitionListener {
         private const val MODEL_ASSET = "model"
         private const val CHANNEL_ID = "hotword_channel"
         private const val NOTIFICATION_ID = 1001
-        private const val WAKE_CHANNEL_ID = "hotword_wake_channel"
+        private const val WAKE_CHANNEL_ID = "hotword_wake_v2"
         private const val WAKE_NOTIFICATION_ID = 1002
 
         const val PREF_NAME = AppPreferences.PREFS_NAME
@@ -184,10 +184,7 @@ class HotwordService : Service(), RecognitionListener {
             stopListening()
             return
         }
-
-        if (speechService == null) {
-            startListening()
-        }
+        startListening()
     }
 
     override fun onResult(hypothesis: String?) {
@@ -282,7 +279,10 @@ class HotwordService : Service(), RecognitionListener {
             val channel = NotificationChannel(
                 WAKE_CHANNEL_ID,
                 "Gervis Wake",
-                NotificationManager.IMPORTANCE_HIGH,
+                // IMPORTANCE_LOW: no sound, no heads-up — only the full-screen intent behaviour.
+                // Using IMPORTANCE_HIGH here causes Android to play the channel's default
+                // notification sound immediately at wake-word detection (wrong moment).
+                NotificationManager.IMPORTANCE_LOW,
             ).apply {
                 description = "Screen wakes when wake word is detected"
                 setShowBadge(false)
@@ -304,8 +304,8 @@ class HotwordService : Service(), RecognitionListener {
             .setContentTitle("Gervis")
             .setContentText("Listening...")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            // CATEGORY_CALL removed — can trigger extra audio routing on some OEMs.
             .setFullScreenIntent(fullScreenPi, true)
             .setAutoCancel(true)
             .build()
