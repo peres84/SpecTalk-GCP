@@ -2,6 +2,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 
 
+_SHUTDOWN_LIVE_MODELS = {
+    "gemini-2.0-flash-live-001": (
+        "Gemini Live model gemini-2.0-flash-live-001 was shut down on 2025-12-09. "
+        "Use gemini-2.5-flash-native-audio-preview-12-2025."
+    ),
+    "gemini-live-2.5-flash-preview": (
+        "Gemini Live model gemini-live-2.5-flash-preview was shut down on 2025-12-09. "
+        "Use gemini-2.5-flash-native-audio-preview-12-2025."
+    ),
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -41,6 +53,14 @@ class Settings(BaseSettings):
             return f"{base}?ssl=require"
         return base
 
+    @field_validator("gemini_model")
+    @classmethod
+    def validate_gemini_model(cls, v: str) -> str:
+        shutdown_message = _SHUTDOWN_LIVE_MODELS.get(v)
+        if shutdown_message:
+            raise ValueError(shutdown_message)
+        return v
+
     environment: str = "development"
     allowed_origins: list[str] = ["http://localhost:3000"]
 
@@ -49,7 +69,7 @@ class Settings(BaseSettings):
     # Used for: Gemini Live voice session, Google Search grounding, Google Maps grounding
     gemini_api_key: str = ""
     adk_app_name: str = "spectalk"
-    gemini_model: str = "gemini-2.0-flash-live-001"
+    gemini_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
 
     # Phase 4: Background jobs, Cloud Tasks, and FCM notifications
     # GCP project ID — required for Cloud Tasks in production

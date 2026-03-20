@@ -10,6 +10,13 @@ The backend uses Google ADK to run Gervis as a voice agent. The agent runs serve
 owns the Gemini Live session, and executes all tools natively in the same Python process.
 The phone is a thin audio terminal — it never calls tools or holds credentials.
 
+### Live Model Policy
+
+For Gemini Live in this project, always use `gemini-2.5-flash-native-audio-preview-12-2025`
+unless Google announces and documents a newer supported replacement for bidirectional Live API
+audio sessions. Do not switch back to `gemini-2.0-flash-live-001` or
+`gemini-live-2.5-flash-preview` because both models were shut down on December 9, 2025.
+
 ### Agent Topology
 
 ```

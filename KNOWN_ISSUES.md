@@ -39,8 +39,9 @@ row appears in the `jobs` table. No progress tracking, no completion notificatio
 instead of emitting an actual function call. The `confirm_and_dispatch` /
 `start_background_job` tools are never called as functions.
 
-**Fix applied**: Switched orchestrator model from `gemini-2.5-flash-native-audio-preview-12-2025`
-to `gemini-2.0-flash-live-001` (stable Live API model, better function-call compliance).
+**Fix applied**: Standardized the backend on `gemini-2.5-flash-native-audio-preview-12-2025`.
+The older `gemini-2.0-flash-live-001` Live API model was shut down on December 9, 2025,
+so it must not be used in config, docs, or deploy settings.
 `INVOKED` entry log added to all three coding tool entry points (`request_clarification`,
 `generate_and_confirm_prd`, `confirm_and_dispatch`).
 
