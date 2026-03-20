@@ -10,6 +10,67 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.9] - Gervis speaks first + cross-session project memory + turn-count fix
+
+**Modified files:** `ws/voice_handler.py`, `services/conversation_service.py`, `services/project_service.py` (new), `tools/project_tools.py` (new), `tools/openclaw_coding_tool.py`, `agents/orchestrator.py`, `db/models.py`, `config.py`, `migrations/versions/e5f2a3b8c1d7_user_projects.py` (new)
+
+#### `ws/voice_handler.py` — proactive greeting: Gervis always speaks first on connect
+
+Previously, when a phone WebSocket connected, the backend silently waited for the user to speak
+first. No greeting, no acknowledgement — the session felt dead until the user said something.
+
+Fix: immediately after ADK session setup, inject a `send_content()` prompt into the
+`LiveRequestQueue` so Gervis produces the opening utterance. Three cases handled:
+
+1. **Pending resume events** (job completed while user was away) — inject a resume context
+   prompt summarising completed work and offering next steps. Already existed; preserved.
+2. **Returning user** (`turn_count > 0`, no pending events) — inject a brief "Welcome back!
+   What would you like to do?" style prompt.
+3. **New conversation** (`turn_count == 0`) — inject "A new voice session has started. Greet
+   the user and ask what they'd like to build."
+
+The injection uses `send_content(types.Content(role="user", parts=[...]))` so Gemini treats
+it as a system cue, not a user utterance that would appear in transcript display.
+
+If `send_content` is unavailable in the installed ADK version, the injection is skipped with
+a `WARNING` log and the old silent-wait behaviour is preserved (graceful degradation).
+
+#### `services/conversation_service.py` — add `get_turn_count()`
+
+`voice_handler.py` imported `get_turn_count` to decide greeting type, but the function did not
+exist — this would have caused an `ImportError` crashing every WebSocket connect on deploy.
+
+Added `get_turn_count(conversation_id: str) -> int` that queries `COUNT(*)` on the `turns`
+table. Returns 0 on any exception (safe fallback: new-session greeting).
+
+#### Cross-session project memory (`services/project_service.py`, `tools/project_tools.py`, `db/models.py`)
+
+**Problem**: Users saying "edit my LangDrill project with OpenClaw" in a new session had no
+way for the backend to know which directory or OpenClaw response ID to resume from. Each
+session started from scratch.
+
+**Solution**: New `user_projects` table (Alembic migration `e5f2a3b8c1d7`) stores:
+`user_id`, `project_name`, `slug` (voice-normalised), `path`, `url`,
+`last_openclaw_response_id`, `last_job_id`.
+
+- `project_service.py`: `upsert_user_project()` called after every successful OpenClaw job.
+  `find_user_project(user_id, query)` matches by exact slug then fuzzy substring — tolerates
+  voice recognition variations ("lang drill" → "langdrill").
+- `project_tools.py`: ADK tool `lookup_project(project_name, tool_context)` wraps the service
+  lookup and returns project metadata (path, URL, last response ID) to the orchestrator.
+- `openclaw_coding_tool.py`: `_get_last_response_id` now checks `UserProject` first (cross-
+  session), then falls back to job artifacts (same-session).
+- `orchestrator.py`: `lookup_project` added to the tools list (8 tools total); system prompt
+  updated to describe "Editing existing projects" using `lookup_project` before dispatching.
+
+#### `config.py` — `openclaw_projects_dir` setting
+
+Added `openclaw_projects_dir: str = "~/websites_projects"`. OpenClaw coding tool now creates
+every new project in a subdirectory of this path (`<dir>/<slug>/`) so all projects land in a
+consistent, predictable location on the Cloud Run container.
+
+---
+
 ### [Phase 5.8] - Deprecated model, Pydantic warning, session timeout handling
 
 **Modified files:** `agents/team_code_pr_designers/designer_agent.py`, `services/gemini_live_client.py`, `ws/voice_handler.py`

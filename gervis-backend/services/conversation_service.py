@@ -5,7 +5,7 @@ import logging
 
 from db.database import AsyncSessionLocal
 from db.models import Turn, Conversation
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,19 @@ async def set_conversation_idle(conversation_id: str) -> None:
                 await session.commit()
     except Exception as e:
         logger.warning(f"Failed to set conversation idle [{conversation_id}]: {e}")
+
+
+async def get_turn_count(conversation_id: str) -> int:
+    """Return the number of turns stored for a conversation. Returns 0 on error."""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(func.count()).where(Turn.conversation_id == uuid.UUID(conversation_id))
+            )
+            return result.scalar_one() or 0
+    except Exception as e:
+        logger.warning(f"Failed to get turn count [{conversation_id}]: {e}")
+        return 0
 
 
 async def set_conversation_state(conversation_id: str, state: str) -> None:

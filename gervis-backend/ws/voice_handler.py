@@ -306,36 +306,61 @@ async def voice_websocket(
             live_request_queue=live_request_queue,
         )
 
-        # Inject pending resume context into Gemini before the first audio frame.
-        # This triggers a spoken welcome-back message when the user reconnects.
+        # Always inject a session-start prompt so Gervis speaks first.
+        #
+        # Three cases:
+        #  1. Pending resume events (job completed while away) → inject full resume context
+        #  2. Returning user (prior turns exist, no pending events) → inject welcome-back prompt
+        #  3. New conversation (no turns yet) → inject new-session greeting prompt
+        #
+        # Without this injection Gemini waits silently for the user to speak first.
         pending_events = await get_pending_resume_events(conversation_id)
+
         if pending_events:
             summaries = ". ".join(
                 ev.spoken_summary or ev.display_summary or f"{ev.event_type} completed"
                 for ev in pending_events
             )
-            resume_context = (
+            session_prompt = (
                 f"The user has returned after being away. "
                 f"The following completed while they were gone: {summaries}. "
                 "Please greet the user warmly, briefly tell them the news, "
                 "and offer to help with next steps."
             )
-            try:
-                live_request_queue.send_content(
-                    types.Content(
-                        role="user",
-                        parts=[types.Part(text=resume_context)],
-                    )
+            asyncio.create_task(acknowledge_all_resume_events(conversation_id))
+            logger.info(
+                f"[{conversation_id}] Injecting resume context for {len(pending_events)} event(s)"
+            )
+        else:
+            # Check if this is a returning user (conversation has prior turns)
+            from services.conversation_service import get_turn_count
+            turn_count = await get_turn_count(conversation_id)
+            if turn_count > 0:
+                session_prompt = (
+                    "The user has reconnected to an existing conversation. "
+                    "Greet them warmly and briefly — just 'Welcome back! What would you like to do?' "
+                    "or similar. Keep it short."
                 )
-                logger.info(
-                    f"[{conversation_id}] Resume context injected for {len(pending_events)} event(s)"
+                logger.info(f"[{conversation_id}] Injecting welcome-back prompt (turns={turn_count})")
+            else:
+                session_prompt = (
+                    "A new voice session has started. "
+                    "Greet the user briefly and ask what they'd like to build or explore today."
                 )
-                asyncio.create_task(acknowledge_all_resume_events(conversation_id))
-            except AttributeError:
-                logger.warning(
-                    f"[{conversation_id}] send_content not available in this ADK version "
-                    "— resume context injection skipped"
+                logger.info(f"[{conversation_id}] Injecting new-session greeting prompt")
+
+        try:
+            live_request_queue.send_content(
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=session_prompt)],
                 )
+            )
+        except AttributeError:
+            logger.warning(
+                f"[{conversation_id}] send_content not available in this ADK version "
+                "— session-start prompt skipped (Gervis will wait for user to speak first)"
+            )
 
     except Exception as e:
         logger.error(f"[{conversation_id}] Failed to start ADK session: {e}")
