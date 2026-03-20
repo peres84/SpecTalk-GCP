@@ -9,6 +9,53 @@ Newest entries at the top.
 
 ### Fixed
 
+#### Meta glasses capture can now be triggered by the agent and lands in chat like a normal image
+- the Android voice client now handles backend `request_visual_capture` control messages during
+  live listening sessions
+- when Meta glasses are connected and their camera is ready, the app captures automatically,
+  sends the image to Gemini, shows the preview inline in chat, and keeps the image in Gallery
+- capture failures are now reported back to the backend so Gervis can ask the user to reconnect
+  glasses or share an image manually instead of failing silently
+
+#### Conversation composer is cleaner and keeps image capture inside the chat controls
+- `ui/screens/VoiceSessionScreen.kt` removes the top-right camera icon from the header
+- the send button is now a clearer primary action beside the text field, with mic and photo
+  controls grouped underneath for a less cramped layout
+- the in-chat image button now prefers Meta glasses capture when available and falls back to the
+  phone camera only when glasses capture is unavailable
+
+#### Text mode now gives more room back to the transcript
+- the large listening orb and its helper copy are now hidden while the user is in text mode
+- this gives the transcript and composer more vertical space and makes the chat view feel less
+  cramped when the mic is turned off
+
+#### The drawer now closes properly when tapping the current built/conversations entry
+- sidebar destination taps now close the drawer first and only navigate when the route actually
+  changes
+- result: tapping the currently selected home/conversations destination dismisses the drawer
+  instead of leaving it open
+
+#### The login screen content is now vertically centered
+- `ui/screens/LoginScreen.kt` now centers the welcome block within the viewport while still
+  preserving safe scroll behavior on smaller screens and during keyboard use
+
+#### OpenClaw integration settings now distinguish public backend URLs from project link hosts
+- the OpenClaw connection field is now labeled as a public URL the backend must be able to reach
+- the Settings copy now warns users not to place private `100.x` Tailscale addresses in the
+  integration field, and instead use the `Project Links` host setting for returned project URLs
+
+#### Coding notifications and resume chat are now less noisy
+- completed job summaries now show up in chat as soon as the conversation is reopened
+- duplicate `job_update` text is reduced because the app reuses the backend’s deduped job flow
+- notification resume now has the project result available in chat instead of relying only on a
+  generic greeting
+
+#### Settings now support a preferred Tailscale/dev host for project links
+- `ui/screens/SettingsScreen.kt` adds a `Project Links` section where the user can save a
+  Tailscale IP or domain
+- the live session and PRD confirmation flow now forward that preference so backend coding
+  results can rewrite project URLs onto the preferred host while keeping the deployment port
+
 #### Drawer now lands closed on app entry
 - `navigation/SpecTalkNavGraph.kt` now force-closes the drawer during startup and when returning
   to the home route, preventing the sidebar from appearing open when the app first loads.

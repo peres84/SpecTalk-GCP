@@ -112,6 +112,9 @@ fun SettingsScreen(
     var agentVoiceLanguage by remember {
         mutableStateOf(AppPreferences.getAgentVoiceLanguage(context))
     }
+    var projectNetworkHost by remember {
+        mutableStateOf(AppPreferences.getProjectNetworkHost(context))
+    }
     var locationSummary by remember { mutableStateOf<String?>(null) }
     var locationBusy by remember { mutableStateOf(false) }
 
@@ -385,6 +388,42 @@ fun SettingsScreen(
             }
 
             // ── Integrations ──────────────────────────────────────────────────
+            SettingsGroup(title = "Project Links") {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Preferred dev host",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = "Optional Tailscale IP or domain used when Gervis shares build URLs. The backend keeps the project port and swaps only the host.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    )
+                    OutlinedTextField(
+                        value = projectNetworkHost,
+                        onValueChange = { projectNetworkHost = it },
+                        label = { Text("Tailscale host or URL") },
+                        placeholder = { Text("100.88.x.x or https://machine.tailxxxx.ts.net") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = {
+                            projectNetworkHost = projectNetworkHost.trim()
+                            AppPreferences.setProjectNetworkHost(context, projectNetworkHost)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Text("Save project host", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+
             SettingsGroup(
                 title = "Integrations",
                 trailingContent = {
@@ -626,7 +665,7 @@ private fun IntegrationRow(
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = "AI coding agent",
+                    text = "AI coding agent — use a public URL the backend can reach",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
@@ -685,11 +724,16 @@ private fun IntegrationRow(
                     text = "Connect OpenClaw",
                     style = MaterialTheme.typography.titleMedium,
                 )
+                Text(
+                    text = "Use the public OpenClaw base URL here. Do not use localhost or a private 100.x Tailscale address in this field — the backend must reach it directly. Save your 100.x host in Project Links instead.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
                 OutlinedTextField(
                     value = connectUrl,
                     onValueChange = onConnectUrl,
-                    label = { Text("Base URL") },
-                    placeholder = { Text("https://your-machine.tail-xxxx.ts.net") },
+                    label = { Text("Public OpenClaw URL") },
+                    placeholder = { Text("https://your-public-openclaw.example.com") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),

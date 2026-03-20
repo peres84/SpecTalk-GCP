@@ -198,10 +198,10 @@ async def confirm_and_dispatch(
     """
     from services.control_channels import send_control_message
     from services.conversation_service import set_conversation_state
-    from services.job_service import create_job, enqueue_cloud_task
+    from services.job_service import create_job, enqueue_cloud_task, get_active_job_for_conversation
     from db.database import AsyncSessionLocal
     from db.models import PendingAction
-    from sqlalchemy import select
+    from sqlalchemy import select, update
 
     state = tool_context.state if tool_context else {}
     conversation_id: str = state.get("conversation_id", "")
@@ -245,19 +245,49 @@ async def confirm_and_dispatch(
     if confirmed:
         prd = state.get("pending_prd", {})
         existing_project = state.get("selected_project")
+        preferred_network_host = state.get("preferred_network_host")
         project_name = prd.get("project_name", "your project")
 
-        # Update PendingAction to resolved
+        active_job = await get_active_job_for_conversation(conversation_id, "coding")
+        if active_job:
+            logger.info(
+                f"[{conversation_id}] Reusing existing active coding job {active_job.id} "
+                f"for '{project_name}'"
+            )
+            return (
+                f"I'm already building {project_name}. "
+                "I'll update you as soon as it's ready."
+            )
+
+        # Resolve the pending action exactly once. If another confirmation already
+        # claimed it, reuse the active job instead of creating a duplicate.
         if pending_action_id and conversation_id:
             try:
                 async with AsyncSessionLocal() as db_session:
                     result = await db_session.execute(
-                        select(PendingAction).where(PendingAction.id == pending_action_id)
+                        update(PendingAction)
+                        .where(
+                            PendingAction.id == pending_action_id,
+                            PendingAction.status == "pending",
+                        )
+                        .values(status="resolved")
                     )
-                    pa = result.scalar_one_or_none()
-                    if pa:
-                        pa.status = "resolved"
-                        await db_session.commit()
+                    await db_session.commit()
+                    if result.rowcount == 0:
+                        active_job = await get_active_job_for_conversation(conversation_id, "coding")
+                        if active_job:
+                            logger.info(
+                                f"[{conversation_id}] PendingAction {pending_action_id} "
+                                f"was already resolved; active job is {active_job.id}"
+                            )
+                            return (
+                                f"I'm already building {project_name}. "
+                                "I'll update you as soon as it's ready."
+                            )
+                        return (
+                            f"I've already locked in the build for {project_name}. "
+                            "I'll let you know as soon as it's ready."
+                        )
             except Exception as e:
                 logger.warning(f"[{conversation_id}] Could not resolve PendingAction: {e}")
 
@@ -291,6 +321,7 @@ async def confirm_and_dispatch(
                     payload={
                         "prd": prd,
                         "existing_project": existing_project,
+                        "preferred_network_host": preferred_network_host,
                     },
                 )
             )

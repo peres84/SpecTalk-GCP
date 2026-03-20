@@ -65,7 +65,7 @@ async def execute_job(
     from services.notification_service import send_push_notification, get_user_push_token
     from services.resume_event_service import create_resume_event
     from services.control_channels import send_control_message
-    from services.conversation_service import set_conversation_state
+    from services.conversation_service import set_conversation_state, persist_turn
     from services.audio_session_manager import audio_session_manager
 
     job_id = body.job_id
@@ -150,7 +150,7 @@ async def execute_job(
                 f"[{conversation_id}] Job {job_id} session not live — creating resume event + FCM"
             )
 
-            resume_event = await create_resume_event(
+            resume_event, created = await create_resume_event(
                 conversation_id=conversation_id,
                 event_type="job_completed",
                 job_id=job_id,
@@ -160,13 +160,20 @@ async def execute_job(
             )
 
             await set_conversation_state(conversation_id, "awaiting_resume")
+            if created:
+                await persist_turn(
+                    conversation_id,
+                    "assistant",
+                    display_summary or spoken_summary,
+                    "job_completed",
+                )
 
             push_token = await get_user_push_token(user_id)
             logger.info(
                 f"[{conversation_id}] FCM push_token for user {user_id}: "
                 f"{'found' if push_token else 'NULL — skipping notification'}"
             )
-            if push_token:
+            if push_token and created:
                 await send_push_notification(
                     push_token=push_token,
                     title="SpecTalk — Job Complete",
@@ -193,7 +200,7 @@ async def execute_job(
         # For failures: always create a resume event and notify via FCM.
         # Even if the session is live, failures warrant a persistent notification
         # so the user can review them later.
-        await create_resume_event(
+        _, created = await create_resume_event(
             conversation_id=conversation_id,
             event_type="job_failed",
             job_id=job_id,
@@ -203,6 +210,13 @@ async def execute_job(
             display_summary=error_summary,
         )
         await set_conversation_state(conversation_id, "idle")
+        if created:
+            await persist_turn(
+                conversation_id,
+                "assistant",
+                error_summary,
+                "job_failed",
+            )
         await send_control_message(conversation_id, {
             "type": "job_update",
             "job_id": job_id,
@@ -217,7 +231,7 @@ async def execute_job(
         )
 
         push_token = await get_user_push_token(user_id)
-        if push_token:
+        if push_token and created:
             await send_push_notification(
                 push_token=push_token,
                 title="SpecTalk — Job Failed",

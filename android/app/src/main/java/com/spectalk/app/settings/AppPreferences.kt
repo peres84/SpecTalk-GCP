@@ -9,6 +9,7 @@ object AppPreferences {
     const val PREF_SHARE_LOCATION = "pref_share_location"
     const val PREF_AUTO_OPEN_ON_NOTIFICATION = "pref_auto_open_on_notification"
     const val PREF_AGENT_VOICE_LANGUAGE = "pref_agent_voice_language"
+    const val PREF_PROJECT_NETWORK_HOST = "pref_project_network_host"
 
     const val DEFAULT_WAKE_WORD = "Hey Gervis"
 
@@ -67,6 +68,15 @@ object AppPreferences {
 
     fun setAgentVoiceLanguage(context: Context, language: AgentVoiceLanguage) {
         prefs(context).edit { putString(PREF_AGENT_VOICE_LANGUAGE, language.prefValue) }
+    }
+
+    fun getProjectNetworkHost(context: Context): String =
+        prefs(context).getString(PREF_PROJECT_NETWORK_HOST, "")
+            ?.trim()
+            .orEmpty()
+
+    fun setProjectNetworkHost(context: Context, value: String) {
+        prefs(context).edit { putString(PREF_PROJECT_NETWORK_HOST, value.trim()) }
     }
 
     fun isLocationSharingEnabled(context: Context): Boolean =

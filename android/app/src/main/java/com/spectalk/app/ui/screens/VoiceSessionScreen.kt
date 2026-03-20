@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -41,15 +42,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -142,6 +144,13 @@ fun VoiceSessionScreen(
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
+    val sendImageFromBestSource = {
+        if (uiState.isConnected && uiState.isGlassesCameraReady) {
+            viewModel.sendGlassesFrame()
+        } else {
+            launchPhoneCamera()
+        }
+    }
 
     LaunchedEffect(conversationId) { viewModel.startSession(conversationId) }
 
@@ -223,28 +232,7 @@ fun VoiceSessionScreen(
                     }
 
                     Spacer(Modifier.weight(1f))
-
-                    when {
-                        uiState.isConnected && uiState.isGlassesCameraReady ->
-                            IconButton(onClick = { viewModel.sendGlassesFrame() }) {
-                                Icon(
-                                    imageVector = Icons.Default.CameraAlt,
-                                    contentDescription = "Send glasses view to Gervis",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-
-                        uiState.isConnected ->
-                            IconButton(onClick = launchPhoneCamera) {
-                                Icon(
-                                    imageVector = Icons.Default.PhotoCamera,
-                                    contentDescription = "Take photo for Gervis",
-                                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
-                                )
-                            }
-
-                        else -> Spacer(Modifier.size(48.dp))
-                    }
+                    Spacer(Modifier.size(48.dp))
                 }
 
                 val showVoiceStage = !uiState.isConnected || uiState.isConnecting || uiState.isListeningEnabled
@@ -312,7 +300,7 @@ fun VoiceSessionScreen(
                     onDraftChanged = viewModel::setDraftText,
                     onSendText = viewModel::sendDraftText,
                     onToggleListening = viewModel::toggleListeningEnabled,
-                    onSendImage = launchPhoneCamera,
+                    onSendImage = sendImageFromBestSource,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -460,49 +448,78 @@ private fun ChatComposer(
 
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(28.dp))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
             .border(
                 width = 1.dp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(28.dp),
             )
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        OutlinedTextField(
-            value = uiState.draftText,
-            onValueChange = onDraftChanged,
-            enabled = enabled,
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            textStyle = MaterialTheme.typography.bodyMedium,
-            placeholder = {
-                Text(
-                    text = if (uiState.isListeningEnabled) {
-                        "Type something, or keep talking..."
-                    } else {
-                        "Send a message to Gervis..."
-                    }
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = uiState.draftText,
+                onValueChange = onDraftChanged,
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+                textStyle = MaterialTheme.typography.bodyMedium,
+                placeholder = {
+                    Text(
+                        text = if (uiState.isListeningEnabled) {
+                            "Type something, or keep talking..."
+                        } else {
+                            "Send a message to Gervis..."
+                        }
+                    )
+                },
+                minLines = 1,
+                maxLines = 4,
+                shape = RoundedCornerShape(20.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                ),
+            )
+
+            FilledIconButton(
+                onClick = onSendText,
+                enabled = enabled && uiState.draftText.isNotBlank(),
+                modifier = Modifier.size(50.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f),
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f),
+                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f),
+                ),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "Send text",
                 )
-            },
-            minLines = 1,
-            maxLines = 4,
-            shape = RoundedCornerShape(18.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
-                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
-            ),
-        )
+            }
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 IconButton(
                     onClick = onToggleListening,
                     enabled = enabled,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .offset(x = (-2).dp),
                 ) {
                     Icon(
                         imageVector = if (uiState.isListeningEnabled) {
@@ -526,6 +543,7 @@ private fun ChatComposer(
                 IconButton(
                     onClick = onSendImage,
                     enabled = enabled,
+                    modifier = Modifier.size(40.dp),
                 ) {
                     Icon(
                         imageVector = Icons.Default.PhotoCamera,
@@ -535,20 +553,11 @@ private fun ChatComposer(
                 }
             }
 
-            IconButton(
-                onClick = onSendText,
-                enabled = enabled && uiState.draftText.isNotBlank(),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send text",
-                    tint = if (enabled && uiState.draftText.isNotBlank()) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                    },
-                )
-            }
+            Text(
+                text = if (uiState.isListeningEnabled) "Listening" else "Text mode",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f),
+            )
         }
     }
 }

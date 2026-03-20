@@ -21,10 +21,33 @@ async def create_resume_event(
     job_id: str | None = None,
     spoken_summary: str | None = None,
     display_summary: str | None = None,
-    artifacts: dict | None = None,
-) -> ResumeEvent:
-    """Create a resume event and increment pending_resume_count on the conversation."""
+    artifacts: dict | list | None = None,
+) -> tuple[ResumeEvent, bool]:
+    """Create a resume event once and increment pending_resume_count.
+
+    Returns `(event, created)` where `created` is False when an equivalent
+    resume event already exists for the same job and event type.
+    """
     async with AsyncSessionLocal() as session:
+        if job_id:
+            existing_result = await session.execute(
+                select(ResumeEvent)
+                .where(
+                    ResumeEvent.conversation_id == uuid.UUID(conversation_id),
+                    ResumeEvent.job_id == uuid.UUID(job_id),
+                    ResumeEvent.event_type == event_type,
+                )
+                .order_by(ResumeEvent.created_at.desc())
+                .limit(1)
+            )
+            existing_event = existing_result.scalar_one_or_none()
+            if existing_event:
+                logger.info(
+                    f"[{conversation_id}] Resume event already exists for "
+                    f"job={job_id} type={event_type} — reusing {existing_event.id}"
+                )
+                return existing_event, False
+
         event = ResumeEvent(
             conversation_id=uuid.UUID(conversation_id),
             job_id=uuid.UUID(job_id) if job_id else None,
@@ -49,7 +72,7 @@ async def create_resume_event(
         logger.info(
             f"[{conversation_id}] Resume event created: {event.id} type={event_type}"
         )
-        return event
+        return event, True
 
 
 async def get_pending_resume_events(conversation_id: str) -> list[ResumeEvent]:

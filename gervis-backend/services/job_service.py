@@ -91,6 +91,26 @@ async def get_job_by_id(job_id: str) -> Job | None:
         return result.scalar_one_or_none()
 
 
+async def get_active_job_for_conversation(
+    conversation_id: str,
+    job_type: str | None = None,
+) -> Job | None:
+    """Return the newest queued/running job for a conversation, if any."""
+    async with AsyncSessionLocal() as session:
+        query = (
+            select(Job)
+            .where(Job.conversation_id == uuid.UUID(conversation_id))
+            .where(Job.status.in_(("queued", "running")))
+            .order_by(Job.created_at.desc())
+            .limit(1)
+        )
+        if job_type:
+            query = query.where(Job.job_type == job_type)
+
+        result = await session.execute(query)
+        return result.scalar_one_or_none()
+
+
 async def enqueue_cloud_task(
     job_id: str,
     job_type: str,

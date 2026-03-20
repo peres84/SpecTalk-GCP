@@ -59,6 +59,15 @@ fun SpecTalkNavGraph() {
 
     fun openDrawer() = scope.launch { drawerState.open() }
     fun closeDrawer() = scope.launch { drawerState.close() }
+    fun navigateFromDrawer(
+        targetRoute: String,
+        navigate: () -> Unit,
+    ) = scope.launch {
+        drawerState.close()
+        if (currentRoute != targetRoute) {
+            navigate()
+        }
+    }
 
     LaunchedEffect(Unit) {
         drawerState.snapTo(DrawerValue.Closed)
@@ -202,30 +211,34 @@ fun SpecTalkNavGraph() {
                     currentRoute = currentRoute,
                     userEmail = email,
                     onNavigateToHome = {
-                        closeDrawer()
-                        navController.navigate(Screen.Home.route) {
-                            popUpTo(Screen.Home.route) { inclusive = true }
-                            launchSingleTop = true
+                        navigateFromDrawer(Screen.Home.route) {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.Home.route) { inclusive = true }
+                                launchSingleTop = true
+                            }
                         }
                     },
                     onNavigateToGallery = {
-                        closeDrawer()
-                        navController.navigate(Screen.Gallery.route) {
-                            popUpTo(Screen.Home.route) { inclusive = false }
-                            launchSingleTop = true
+                        navigateFromDrawer(Screen.Gallery.route) {
+                            navController.navigate(Screen.Gallery.route) {
+                                popUpTo(Screen.Home.route) { inclusive = false }
+                                launchSingleTop = true
+                            }
                         }
                     },
                     onNavigateToTutorial = {
-                        closeDrawer()
-                        navController.navigate(Screen.Tutorial.route) {
-                            popUpTo(Screen.Home.route) { inclusive = false }
-                            launchSingleTop = true
+                        navigateFromDrawer(Screen.Tutorial.route) {
+                            navController.navigate(Screen.Tutorial.route) {
+                                popUpTo(Screen.Home.route) { inclusive = false }
+                                launchSingleTop = true
+                            }
                         }
                     },
                     onNavigateToSettings = {
-                        closeDrawer()
-                        navController.navigate(Screen.Settings.route) {
-                            launchSingleTop = true
+                        navigateFromDrawer(Screen.Settings.route) {
+                            navController.navigate(Screen.Settings.route) {
+                                launchSingleTop = true
+                            }
                         }
                     },
                     onSignOut = {

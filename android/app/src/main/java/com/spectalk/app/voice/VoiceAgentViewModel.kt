@@ -176,9 +176,11 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             val preferredVoiceLanguage = AppPreferences
                 .getAgentVoiceLanguage(getApplication())
                 .prefValue
+            val preferredNetworkHost = AppPreferences.getProjectNetworkHost(getApplication())
             client.connect(
                 conversationId = resolvedConversationId,
                 voiceLanguage = preferredVoiceLanguage,
+                tailscaleHost = preferredNetworkHost,
             )
 
             // Start glasses camera if Meta wearable is connected
@@ -190,6 +192,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 viewModelScope.launch {
                     GlassesCameraManager.isReady.collect { ready ->
                         _uiState.update { it.copy(isGlassesCameraReady = ready) }
+                        syncSessionCapabilities()
                     }
                 }
             }
@@ -282,6 +285,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                     statusMessage = "Text mode",
                 )
             }
+            syncSessionCapabilities()
         } else {
             val started = startMicrophone()
             if (started) {
@@ -292,6 +296,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                         statusMessage = "Connected — listening...",
                     )
                 }
+                syncSessionCapabilities()
                 if (_uiState.value.isListeningEnabled) {
                     resetInactivityTimer()
                 }
@@ -349,6 +354,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 if (_uiState.value.isListeningEnabled && startMicrophone()) {
                     resetInactivityTimer()
                 }
+                syncSessionCapabilities()
             }
 
             is VoiceClientEvent.AudioChunk -> {
@@ -455,7 +461,35 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
 
             is VoiceClientEvent.JobUpdate -> {
                 if (event.status == "completed" || event.status == "failed") {
-                    _uiState.update { it.copy(activeJobDescription = "") }
+                    _uiState.update { state ->
+                        state.copy(
+                            activeJobDescription = "",
+                            turns = if (event.message.isNotBlank()) {
+                                appendCommittedTurn(state.turns, "assistant", event.message)
+                            } else {
+                                state.turns
+                            },
+                        )
+                    }
+                }
+            }
+
+            is VoiceClientEvent.RequestVisualCapture -> {
+                if (event.source == "glasses" &&
+                    _uiState.value.isConnected &&
+                    _uiState.value.isListeningEnabled &&
+                    _uiState.value.isGlassesCameraReady
+                ) {
+                    sendGlassesFrame(requestedByAgent = true)
+                } else {
+                    backendClient?.sendVisualCaptureFailure(
+                        when {
+                            !_uiState.value.isConnected -> "No active voice session"
+                            !_uiState.value.isListeningEnabled -> "Listening mode is turned off"
+                            !_uiState.value.isGlassesCameraReady -> "Meta glasses camera is not ready"
+                            else -> "Automatic glasses capture is unavailable"
+                        }
+                    )
                 }
             }
 
@@ -640,8 +674,16 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             ConnectedDeviceMonitor.state.collect { state ->
                 audioPlayer?.setPreferSpeaker(!state.isWakeWordReady)
                 _uiState.update { it.copy(isWakeWordDeviceConnected = state.isWakeWordReady) }
+                syncSessionCapabilities()
             }
         }
+    }
+
+    private fun syncSessionCapabilities() {
+        backendClient?.sendSessionCapabilities(
+            glassesCameraReady = _uiState.value.isGlassesCameraReady,
+            listeningEnabled = _uiState.value.isListeningEnabled,
+        )
     }
 
     private suspend fun resolveLocationContext(): UserLocationContext? {
@@ -767,8 +809,15 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 setError("Not signed in — please log in again.")
                 return@launch
             }
+            val networkHost = AppPreferences.getProjectNetworkHost(getApplication())
             val success = runCatching {
-                conversationRepository.confirmPrd(jwt, conversationId, confirmed, changeRequest)
+                conversationRepository.confirmPrd(
+                    jwt = jwt,
+                    conversationId = conversationId,
+                    confirmed = confirmed,
+                    changeRequest = changeRequest,
+                    networkHost = networkHost.ifBlank { null },
+                )
             }.getOrDefault(false)
 
             if (success) {
@@ -786,7 +835,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun sendGlassesFrame() {
+    fun sendGlassesFrame(requestedByAgent: Boolean = false) {
         val client = backendClient ?: return
         viewModelScope.launch {
             when (val result = GlassesCameraManager.capturePhoto()) {
@@ -803,12 +852,19 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                         state.copy(
                             turns = appendImageTurn(
                                 state.turns,
-                                "Shared your glasses view",
+                                if (requestedByAgent) {
+                                    "Captured your current view"
+                                } else {
+                                    "Shared your glasses view"
+                                },
                                 savedImagePath,
                             )
                         )
                     }
-                    client.sendImage(result.jpegBytes)
+                    client.sendImage(
+                        result.jpegBytes,
+                        source = if (requestedByAgent) "glasses_auto" else "glasses_manual",
+                    )
                     if (_uiState.value.isListeningEnabled) {
                         resetInactivityTimer()
                     }
@@ -816,6 +872,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 }
                 is CaptureResult.Failure -> {
                     Log.w(TAG, "Glasses capture failed: ${result.reason}")
+                    client.sendVisualCaptureFailure(result.reason)
                     setError("Could not capture from glasses: ${result.reason}")
                 }
             }
@@ -846,7 +903,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             if (_uiState.value.isListeningEnabled) {
                 resetInactivityTimer()
             }
-            client.sendImage(jpegBytes)
+            client.sendImage(jpegBytes, source = "phone_camera")
             Log.i(TAG, "Camera image sent (${jpegBytes.size} bytes)")
         }
     }

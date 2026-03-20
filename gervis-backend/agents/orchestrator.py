@@ -8,6 +8,7 @@ from tools.maps_tool import find_nearby_places
 from tools.notification_resume_tool import start_background_job
 from tools.coding_tools import request_clarification, generate_and_confirm_prd, confirm_and_dispatch
 from tools.project_tools import lookup_project
+from tools.visual_capture_tool import request_visual_capture
 
 GERVIS_INSTRUCTION = """You are Gervis, the AI assistant inside SpecTalk - a voice-powered project creation platform for Meta wearables.
 
@@ -72,7 +73,10 @@ Editing existing projects — CRITICAL RULES:
 Camera / visual context:
 - The user may send a photo from their Meta Ray-Ban glasses at any time during the session.
 - When an image is received, you will see it in the conversation context automatically.
-- If the user says "what do you see?", "look at this", "describe this", "what's in front of me", or similar: describe what you see in the image concisely and naturally, as a friend would.
+- If the user says "what do you see?", "look at this", "describe this", "what's in front of me", or similar and there is not already a fresh image in context, FIRST call the request_visual_capture FUNCTION.
+- Only use request_visual_capture when the user is in a live Meta glasses session. If the tool says capture_requested=true, wait for the image and then answer from the image. Do not answer before the image arrives.
+- If request_visual_capture says it is unavailable, briefly ask the user to reconnect their Meta glasses camera or manually send a picture.
+- If the user says "what do you see?", "look at this", "describe this", "what's in front of me", or similar and there is already an image in context: describe what you see in the image concisely and naturally, as a friend would.
 - If no question is asked with the image, acknowledge briefly that you received it and offer to describe it.
 - Never mention "base64", "blob", "JPEG", or technical image terms. Just describe what you see.
 
@@ -95,5 +99,6 @@ def create_gervis_agent(model: str) -> Agent:
             generate_and_confirm_prd,
             confirm_and_dispatch,
             lookup_project,
+            request_visual_capture,
         ],
     )

@@ -37,6 +37,7 @@ sealed interface VoiceClientEvent {
     data class StateUpdate(val state: String, val prdSummary: PrdSummary? = null) : VoiceClientEvent
     data class JobStarted(val jobId: String, val description: String) : VoiceClientEvent
     data class JobUpdate(val jobId: String, val status: String, val message: String) : VoiceClientEvent
+    data class RequestVisualCapture(val source: String) : VoiceClientEvent
     /** Backend is requesting the device's current location (e.g. for the Maps tool). */
     data object LocationRequest : VoiceClientEvent
     data class Error(val message: String) : VoiceClientEvent
@@ -78,12 +79,24 @@ class BackendVoiceClient(
     @Volatile private var webSocket: WebSocket? = null
     @Volatile private var isConnected: Boolean = false
 
-    fun connect(conversationId: String, voiceLanguage: String? = null) {
+    fun connect(
+        conversationId: String,
+        voiceLanguage: String? = null,
+        tailscaleHost: String? = null,
+    ) {
         val url = buildString {
             append("$backendUrl/ws/voice/$conversationId")
+            var hasQuery = false
             if (!voiceLanguage.isNullOrBlank()) {
-                append("?voice_language=")
+                append(if (hasQuery) "&" else "?")
+                append("voice_language=")
                 append(URLEncoder.encode(voiceLanguage, Charsets.UTF_8.name()))
+                hasQuery = true
+            }
+            if (!tailscaleHost.isNullOrBlank()) {
+                append(if (hasQuery) "&" else "?")
+                append("tailscale_host=")
+                append(URLEncoder.encode(tailscaleHost, Charsets.UTF_8.name()))
             }
         }
         val request = Request.Builder()
@@ -163,13 +176,16 @@ class BackendVoiceClient(
     }
 
     /** Send a JPEG image frame (e.g. from Meta glasses) to Gervis for visual understanding. */
-    fun sendImage(jpegBytes: ByteArray) {
+    fun sendImage(jpegBytes: ByteArray, source: String? = null) {
         if (!isConnected) return
         val b64 = android.util.Base64.encodeToString(jpegBytes, android.util.Base64.NO_WRAP)
         val payload = JSONObject()
             .put("type", "image")
             .put("mime_type", "image/jpeg")
             .put("data", b64)
+        if (!source.isNullOrBlank()) {
+            payload.put("source", source)
+        }
         webSocket?.send(payload.toString())
     }
 
@@ -180,6 +196,31 @@ class BackendVoiceClient(
             JSONObject()
                 .put("type", "text_input")
                 .put("text", text)
+                .toString(),
+        )
+    }
+
+    fun sendSessionCapabilities(
+        glassesCameraReady: Boolean,
+        listeningEnabled: Boolean,
+    ) {
+        if (!isConnected) return
+        webSocket?.send(
+            JSONObject()
+                .put("type", "session_capabilities")
+                .put("glasses_camera_ready", glassesCameraReady)
+                .put("listening_enabled", listeningEnabled)
+                .toString(),
+        )
+    }
+
+    fun sendVisualCaptureFailure(reason: String) {
+        if (!isConnected) return
+        webSocket?.send(
+            JSONObject()
+                .put("type", "visual_capture_status")
+                .put("status", "failed")
+                .put("reason", reason)
                 .toString(),
         )
     }
@@ -260,8 +301,13 @@ class BackendVoiceClient(
             "job_update" -> {
                 val jobId = json.optString("job_id")
                 val status = json.optString("status")
-                val msg = json.optString("message")
+                val msg = json.optString("display_summary")
+                    .ifBlank { json.optString("message") }
                 _events.tryEmit(VoiceClientEvent.JobUpdate(jobId, status, msg))
+            }
+            "request_visual_capture" -> {
+                val source = json.optString("source", "glasses")
+                _events.tryEmit(VoiceClientEvent.RequestVisualCapture(source))
             }
             "request_location" -> _events.tryEmit(VoiceClientEvent.LocationRequest)
             "session_timeout" -> {

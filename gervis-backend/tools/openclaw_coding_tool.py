@@ -15,6 +15,7 @@ so OpenClaw keeps the existing coding context.
 
 import json
 import logging
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 import opik
@@ -24,6 +25,58 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 _OPENCLAW_TIMEOUT = 1800  # 30 minutes
+
+
+def _normalize_network_host(raw: str | None) -> str | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    if "://" not in value:
+        value = f"http://{value}"
+    parsed = urlparse(value)
+    if not parsed.hostname:
+        return None
+    return urlunparse((parsed.scheme or "http", parsed.netloc, "", "", "", ""))
+
+
+def _rewrite_project_url(project_url: str | None, preferred_network_host: str | None) -> str | None:
+    if not project_url:
+        return project_url
+
+    normalized_host = _normalize_network_host(preferred_network_host)
+    if not normalized_host:
+        return project_url
+
+    current = urlparse(project_url)
+    preferred = urlparse(normalized_host)
+    if not current.hostname or not preferred.hostname:
+        return project_url
+
+    port = current.port or preferred.port
+    netloc = preferred.hostname
+    if port:
+        netloc = f"{netloc}:{port}"
+
+    return urlunparse((
+        preferred.scheme or current.scheme or "http",
+        netloc,
+        current.path,
+        current.params,
+        current.query,
+        current.fragment,
+    ))
+
+
+def _connection_help_message(openclaw_url: str) -> str:
+    host = urlparse(openclaw_url).hostname or openclaw_url
+    return (
+        "Could not reach your OpenClaw server from the backend. "
+        f"The saved OpenClaw URL '{host}' must be directly reachable from Cloud Run. "
+        "Do not use localhost, 127.0.0.1, or a private Tailscale-only 100.x address here. "
+        "Use a public HTTPS URL for OpenClaw, such as Tailscale Funnel, Cloudflare Tunnel, "
+        "ngrok, or another public endpoint. "
+        "Keep your Tailscale 100.x host in Project Links only for the returned app URL."
+    )
 
 
 async def _get_last_response_id(conversation_id: str, user_id: str, project_name: str) -> str | None:
@@ -83,6 +136,7 @@ async def execute_coding_job(
     existing_project_path = existing_project.get("path")
     existing_project_url = existing_project.get("url")
     existing_response_id = existing_project.get("last_openclaw_response_id")
+    preferred_network_host = payload.get("preferred_network_host")
     project_name = existing_project_name or prd.get("project_name", "your project")
 
     credentials = await get_decrypted_integration(user_id, "openclaw")
@@ -121,7 +175,12 @@ async def execute_coding_job(
             f"4. Inside that project folder, run 'npm install' first.\n"
             f"5. Then run the app with 'npm run dev -- --host 0.0.0.0 --port 5173'.\n"
             f"6. If port 5173 is already in use, choose another available port and use that instead.\n"
-            f"7. Reply with ONLY these two lines (no extra explanation):\n"
+            f"7. For website or landing-page visuals, use Gemini Nano Banana or ChatGPT image "
+            f"generation/editing tools when needed to create polished custom visuals instead of "
+            f"shipping with bland placeholders.\n"
+            f"8. The user wants the shared URL to use this host/domain when possible: "
+            f"{preferred_network_host or 'use the machine host you actually start on'}.\n"
+            f"9. Reply with ONLY these two lines (no extra explanation):\n"
             f"   PATH: <exact absolute path to the project folder>\n"
             f"   URL: <exact URL where the running app is reachable>\n"
             f"   If the app is still using the same URL, return the current URL.\n"
@@ -138,7 +197,12 @@ async def execute_coding_job(
             f"2. Inside the project folder, run 'npm install' first.\n"
             f"3. Then run the app with 'npm run dev -- --host 0.0.0.0 --port 5173'.\n"
             f"4. If port 5173 is already in use, choose another available port and use that instead.\n"
-            f"5. Reply with ONLY these two lines (no extra explanation):\n"
+            f"5. For website or landing-page visuals, use Gemini Nano Banana or ChatGPT image "
+            f"generation/editing tools when needed to create polished custom visuals instead of "
+            f"shipping with bland placeholders.\n"
+            f"6. The user wants the shared URL to use this host/domain when possible: "
+            f"{preferred_network_host or 'use the machine host you actually start on'}.\n"
+            f"7. Reply with ONLY these two lines (no extra explanation):\n"
             f"   PATH: <exact absolute path to the project folder>\n"
             f"   URL: <exact URL where the running app is reachable>\n"
             f"   If nginx deployment failed, omit the URL line and only include PATH."
@@ -162,40 +226,61 @@ async def execute_coding_job(
     full_text = ""
     openclaw_response_id = None
 
-    async with httpx.AsyncClient(timeout=_OPENCLAW_TIMEOUT) as client:
-        async with client.stream(
-            "POST",
-            endpoint,
-            headers={
-                "Authorization": f"Bearer {openclaw_token}",
-                "Content-Type": "application/json",
-                "x-openclaw-agent-id": "main",
-                "x-openclaw-session-key": session_key,
-            },
-            json=request_body,
-        ) as resp:
-            resp.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=_OPENCLAW_TIMEOUT) as client:
+            async with client.stream(
+                "POST",
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {openclaw_token}",
+                    "Content-Type": "application/json",
+                    "x-openclaw-agent-id": "main",
+                    "x-openclaw-session-key": session_key,
+                },
+                json=request_body,
+            ) as resp:
+                resp.raise_for_status()
 
-            async for line in resp.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                raw = line[5:].strip()
-                if not raw or raw == "[DONE]":
-                    continue
-                try:
-                    event = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if not raw or raw == "[DONE]":
+                        continue
+                    try:
+                        event = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
 
-                event_type = event.get("type", "")
+                    event_type = event.get("type", "")
 
-                if event_type == "response.output_text.delta":
-                    full_text += event.get("delta", "")
-                elif event_type == "response.completed":
-                    openclaw_response_id = event.get("response", {}).get("id")
-                elif event_type == "error":
-                    error_msg = event.get("message", "Unknown OpenClaw error")
-                    raise RuntimeError(f"OpenClaw error: {error_msg}")
+                    if event_type == "response.output_text.delta":
+                        full_text += event.get("delta", "")
+                    elif event_type == "response.completed":
+                        openclaw_response_id = event.get("response", {}).get("id")
+                    elif event_type == "error":
+                        error_msg = event.get("message", "Unknown OpenClaw error")
+                        raise RuntimeError(f"OpenClaw error: {error_msg}")
+    except httpx.ConnectError as exc:
+        logger.error(
+            f"[{conversation_id}] Could not connect to OpenClaw at {openclaw_url}: {exc}"
+        )
+        raise RuntimeError(_connection_help_message(openclaw_url)) from exc
+    except httpx.ConnectTimeout as exc:
+        logger.error(
+            f"[{conversation_id}] Timed out connecting to OpenClaw at {openclaw_url}: {exc}"
+        )
+        raise RuntimeError(_connection_help_message(openclaw_url)) from exc
+    except httpx.HTTPStatusError as exc:
+        body_preview = exc.response.text[:300] if exc.response is not None else ""
+        logger.error(
+            f"[{conversation_id}] OpenClaw HTTP error {exc.response.status_code} "
+            f"from {openclaw_url}: {body_preview}"
+        )
+        raise RuntimeError(
+            f"OpenClaw returned HTTP {exc.response.status_code}. "
+            "Please verify the OpenClaw base URL and hook token in Settings -> Integrations."
+        ) from exc
 
     logger.info(
         f"[{conversation_id}] OpenClaw job {job_id} complete "
@@ -210,6 +295,8 @@ async def execute_coding_job(
             project_path = line[5:].strip()
         elif line.startswith("URL:"):
             project_url = line[4:].strip()
+
+    project_url = _rewrite_project_url(project_url, preferred_network_host)
 
     logger.info(
         f"[{conversation_id}] OpenClaw job {job_id} result "

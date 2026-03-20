@@ -7,6 +7,9 @@ Protocol:
     - JSON text: {"type": "end_of_speech"}
                  {"type": "text_input", "text": "..."}
                  {"type": "image", "mime_type": "image/jpeg", "data": "<base64>"}
+                 {"type": "session_capabilities", "glasses_camera_ready": bool,
+                  "listening_enabled": bool}
+                 {"type": "visual_capture_status", "status": "failed", "reason": "..."}
                  {"type": "location_response", "latitude": float, "longitude": float,
                   "accuracy_meters": float (optional), "location_label": str (optional)}
 
@@ -21,12 +24,15 @@ Protocol:
                  {"type": "request_location"}
                  {"type": "job_started", "job_id": "...", "spoken_ack": "..."}
                  {"type": "job_update", "job_id": "...", "status": "...", "display_summary": "..."}
+                 {"type": "request_visual_capture", "source": "glasses"}
                  {"type": "state_update", "state": "..."}
                  {"type": "error", "message": "..."}
 
 Auth: JWT passed as query param ?token=<jwt> OR Authorization header.
       Optional query param ?voice_language=<BCP-47 code> selects the spoken
       language guard for the Live session.
+      Optional query param ?tailscale_host=<host or URL> selects the preferred
+      host/domain used when sharing dev URLs for coding projects.
       WebSocket is closed with code 4001 if token is missing/invalid.
 """
 
@@ -52,6 +58,7 @@ from services.conversation_service import (
 from services.gemini_live_client import gemini_live_client
 import services.location_channels as location_channels
 import services.control_channels as control_channels
+import services.visual_capture_channels as visual_capture_channels
 from services.tracing import record_voice_turn, opik_session_start, opik_session_end, record_voice_turn_opik
 from services.location_context_service import (
     normalize_location_context,
@@ -81,6 +88,11 @@ _pending_text_inputs: dict[str, list[str]] = {}
 _tool_activity_timings: dict[str, dict[str, float]] = {}
 
 
+def _normalize_preferred_network_host(raw: str | None) -> str | None:
+    value = (raw or "").strip()
+    return value or None
+
+
 def _extract_jwt(websocket: WebSocket, token: str | None) -> dict | None:
     """Extract and verify JWT from query param or Authorization header."""
     if token:
@@ -104,6 +116,7 @@ async def _upstream_task(
     websocket: WebSocket,
     live_request_queue: LiveRequestQueue,
     conversation_id: str,
+    user_id: str,
 ) -> None:
     """Forwards phone messages to the ADK live request queue."""
     while True:
@@ -157,7 +170,48 @@ async def _upstream_task(
                     live_request_queue.send_realtime(
                         types.Blob(mime_type=mime, data=raw)
                     )
+                    visual_capture_channels.notify_success(
+                        conversation_id,
+                        source=msg.get("source"),
+                    )
                     logger.debug(f"[{conversation_id}] image injected ({mime}, {len(raw)} bytes)")
+
+                elif msg_type == "session_capabilities":
+                    session = await gemini_live_client.get_or_create_session(
+                        user_id=user_id,
+                        session_id=conversation_id,
+                    )
+                    session.state["glasses_camera_ready"] = bool(msg.get("glasses_camera_ready", False))
+                    session.state["listening_enabled"] = bool(msg.get("listening_enabled", True))
+                    logger.debug(
+                        f"[{conversation_id}] session_capabilities received: "
+                        f"glasses_camera_ready={session.state['glasses_camera_ready']} "
+                        f"listening_enabled={session.state['listening_enabled']}"
+                    )
+
+                elif msg_type == "visual_capture_status":
+                    if msg.get("status") == "failed":
+                        reason = (msg.get("reason") or "Capture failed").strip()
+                        visual_capture_channels.notify_failure(conversation_id, reason)
+                        try:
+                            live_request_queue.send_content(
+                                types.Content(
+                                    role="user",
+                                    parts=[types.Part(
+                                        text=(
+                                            "System update: automatic Meta glasses capture failed. "
+                                            f"Reason: {reason}. "
+                                            "Tell the user briefly and ask them to reconnect their "
+                                            "glasses camera or send a photo manually."
+                                        )
+                                    )],
+                                )
+                            )
+                        except AttributeError:
+                            logger.warning(
+                                f"[{conversation_id}] send_content unavailable — visual capture failure "
+                                "was not injected into the session"
+                            )
 
                 elif msg_type == "location_response":
                     normalized = normalize_location_context(msg)
@@ -206,6 +260,7 @@ def _tool_status_label(tool_name: str) -> str:
         "confirm_and_dispatch": "Starting build",
         "start_background_job": "Starting background job",
         "lookup_project": "Looking up your project",
+        "request_visual_capture": "Capturing glasses view",
     }
     return labels.get(tool_name, tool_name.replace("_", " ").strip().title())
 
@@ -354,6 +409,7 @@ async def voice_websocket(
     conversation_id: str,
     token: str | None = Query(default=None),
     voice_language: str | None = Query(default=None),
+    tailscale_host: str | None = Query(default=None),
 ) -> None:
     """Bidirectional voice bridge between the phone and ADK/Gemini Live."""
     payload = _extract_jwt(websocket, token)
@@ -381,6 +437,11 @@ async def voice_websocket(
             user_id=user_id,
             session_id=conversation_id,
         )
+        preferred_network_host = _normalize_preferred_network_host(tailscale_host)
+        if preferred_network_host:
+            session.state["preferred_network_host"] = preferred_network_host
+        session.state.setdefault("glasses_camera_ready", False)
+        session.state.setdefault("listening_enabled", True)
 
         async def _send_request_location() -> None:
             await websocket.send_text(json.dumps({"type": "request_location"}))
@@ -390,6 +451,7 @@ async def voice_websocket(
 
         location_channels.register(conversation_id, _send_request_location)
         control_channels.register(conversation_id, _send_control_message)
+        visual_capture_channels.register(conversation_id)
 
         live_request_queue = gemini_live_client.new_request_queue()
         # Register the queue so inject_job_result() can speak completed jobs immediately
@@ -413,17 +475,25 @@ async def voice_websocket(
         pending_events = await get_pending_resume_events(conversation_id)
 
         if pending_events:
-            summaries = ". ".join(
-                ev.spoken_summary or ev.display_summary or f"{ev.event_type} completed"
-                for ev in pending_events
-            )
+            summaries: list[str] = []
+            for ev in pending_events:
+                summary = ev.display_summary or ev.spoken_summary or f"{ev.event_type} completed"
+                artifacts = ev.artifacts or {}
+                items = artifacts.get("items") if isinstance(artifacts, dict) else artifacts
+                if isinstance(items, list):
+                    for item in items:
+                        if item.get("type") == "url" and item.get("url"):
+                            summary = f"{summary}. URL: {item['url']}"
+                            break
+                summaries.append(summary)
             session_prompt = (
-                f"The user has returned after being away. "
-                f"The following completed while they were gone: {summaries}. "
-                "Please greet the user warmly, briefly tell them the news, "
-                "and offer to help with next steps."
+                "The user has returned specifically to hear the result of background work. "
+                "Do not start with a generic greeting and do not ask how you can help before "
+                "sharing the result. Start immediately with the completed project news. "
+                f"The following completed while they were gone: {' '.join(summaries)} "
+                "Mention the exact project URL once when available, then briefly offer next steps."
             )
-            asyncio.create_task(acknowledge_all_resume_events(conversation_id))
+            await acknowledge_all_resume_events(conversation_id)
             logger.info(
                 f"[{conversation_id}] Injecting resume context for {len(pending_events)} event(s)"
             )
@@ -478,7 +548,7 @@ async def voice_websocket(
     asyncio.create_task(set_conversation_active(conversation_id))
 
     upstream = asyncio.create_task(
-        _upstream_task(websocket, live_request_queue, conversation_id)
+        _upstream_task(websocket, live_request_queue, conversation_id, user_id)
     )
     downstream = asyncio.create_task(
         _downstream_task(websocket, live_events, conversation_id)
@@ -510,6 +580,7 @@ async def voice_websocket(
         logger.info(f"[{conversation_id}] Phone disconnected, starting grace timer")
         location_channels.unregister(conversation_id)
         control_channels.unregister(conversation_id)
+        visual_capture_channels.unregister(conversation_id)
         audio_session_manager.unregister_live_queue(conversation_id)
         audio_session_manager.start_grace_timer(conversation_id)
         asyncio.create_task(set_conversation_idle(conversation_id))

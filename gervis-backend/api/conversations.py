@@ -192,6 +192,7 @@ async def list_turns(
 class ConfirmRequest(BaseModel):
     confirmed: bool
     change_request: Optional[str] = None
+    network_host: Optional[str] = None
 
 
 @router.post("/{conversation_id}/confirm")
@@ -210,7 +211,7 @@ async def confirm_prd(
     - confirmed=false → cancel the pending action, set conversation to idle
     """
     from sqlalchemy import update as sql_update
-    from services.job_service import create_job, enqueue_cloud_task
+    from services.job_service import create_job, enqueue_cloud_task, get_active_job_for_conversation
     from services.conversation_service import set_conversation_state
     from services.control_channels import send_control_message
 
@@ -253,6 +254,28 @@ async def confirm_prd(
         prd = (pending_action.payload or {}).get("prd", {})
         existing_project = (pending_action.payload or {}).get("existing_project")
         project_name = prd.get("project_name", "your project")
+        active_job = await get_active_job_for_conversation(conversation_id, "coding")
+        if active_job:
+            return {"status": "ok", "job_id": str(active_job.id), "deduped": True}
+
+        resolve_result = await db.execute(
+            sql_update(PendingAction)
+            .where(
+                PendingAction.id == pending_action.id,
+                PendingAction.status == "pending",
+            )
+            .values(status="resolved")
+        )
+        if resolve_result.rowcount == 0:
+            active_job = await get_active_job_for_conversation(conversation_id, "coding")
+            if active_job:
+                await db.commit()
+                return {"status": "ok", "job_id": str(active_job.id), "deduped": True}
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="PRD confirmation has already been handled",
+            )
+        await db.commit()
 
         # Create job row
         job = await create_job(conversation_id=conversation_id, job_type="coding")
@@ -268,12 +291,9 @@ async def confirm_prd(
             payload={
                 "prd": prd,
                 "existing_project": existing_project,
+                "preferred_network_host": body.network_host,
             },
         )
-
-        # Resolve the pending action
-        pending_action.status = "resolved"
-        await db.commit()
 
         # Set conversation state and notify phone if WebSocket is open
         await set_conversation_state(conversation_id, "running_job")

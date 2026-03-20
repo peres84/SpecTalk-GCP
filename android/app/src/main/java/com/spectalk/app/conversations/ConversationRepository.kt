@@ -120,10 +120,12 @@ class ConversationRepository(private val http: OkHttpClient = defaultClient) {
         conversationId: String,
         confirmed: Boolean,
         changeRequest: String?,
+        networkHost: String? = null,
     ): Boolean = withContext(Dispatchers.IO) {
         val bodyJson = JSONObject().apply {
             put("confirmed", confirmed)
             if (!changeRequest.isNullOrBlank()) put("change_request", changeRequest)
+            if (!networkHost.isNullOrBlank()) put("network_host", networkHost)
         }
         val body = bodyJson.toString().toRequestBody("application/json".toMediaType())
         val request = Request.Builder()

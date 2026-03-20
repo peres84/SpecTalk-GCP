@@ -35,7 +35,7 @@ async def openclaw_callback(job_id: str, body: OpenClawCallbackRequest):
     from services.audio_session_manager import audio_session_manager
     from services.control_channels import send_control_message
     from services.resume_event_service import create_resume_event
-    from services.conversation_service import set_conversation_state
+    from services.conversation_service import set_conversation_state, persist_turn
     from services.notification_service import send_push_notification, get_user_push_token
 
     # Validate the job exists
@@ -93,7 +93,7 @@ async def openclaw_callback(job_id: str, body: OpenClawCallbackRequest):
             f"[{conversation_id}] Session not live — creating resume event + FCM for job {job_id}"
         )
 
-        resume_event = await create_resume_event(
+        resume_event, created = await create_resume_event(
             conversation_id=conversation_id,
             event_type="job_completed",
             job_id=job_id,
@@ -103,9 +103,16 @@ async def openclaw_callback(job_id: str, body: OpenClawCallbackRequest):
         )
 
         await set_conversation_state(conversation_id, "awaiting_resume")
+        if created:
+            await persist_turn(
+                conversation_id,
+                "assistant",
+                body.display_summary or body.spoken_summary,
+                "job_completed",
+            )
 
         push_token = await get_user_push_token(user_id)
-        if push_token:
+        if push_token and created:
             await send_push_notification(
                 push_token=push_token,
                 title="SpecTalk — Build Complete",

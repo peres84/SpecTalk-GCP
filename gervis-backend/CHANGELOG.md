@@ -10,6 +10,82 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.14] - Agent-triggered glasses capture + OpenClaw connectivity guidance
+
+**Modified files:** `tools/visual_capture_tool.py`, `services/visual_capture_channels.py`,
+`agents/orchestrator.py`, `ws/voice_handler.py`, `tools/openclaw_coding_tool.py`
+
+#### Gervis can now request a Meta glasses capture during a live listening session
+
+- a new `request_visual_capture` tool lets the agent ask the Android app for a fresh glasses
+  image when the user says things like "what do you see?" or "describe what I see"
+- the tool only succeeds when the session reports that Meta glasses camera capture is ready and
+  listening mode is active
+- the backend now waits for an actual capture result before returning tool success, so the model
+  does not continue as if an image arrived when capture failed
+
+#### Visual capture results now have an explicit backend channel
+
+- `services/visual_capture_channels.py` adds a lightweight per-conversation capture wait/notify
+  flow
+- `ws/voice_handler.py` now tracks `session_capabilities`, reports image-source success on
+  incoming `image` messages, and reports capture failures back into the live session so Gervis
+  can recover gracefully
+
+#### OpenClaw failures now explain the public URL requirement more clearly
+
+- `tools/openclaw_coding_tool.py` now translates connection failures and timeouts into a clearer
+  runtime error that explains the OpenClaw base URL must be reachable from Cloud Run
+- the error guidance now explicitly distinguishes the public OpenClaw integration URL from the
+  separate preferred Tailscale/project-link host used only for returned app URLs
+
+#### OpenClaw website prompts now encourage better generated visuals
+
+- website-oriented coding runs now explicitly tell OpenClaw to use Gemini Nano Banana or ChatGPT
+  image-generation/editing tools for polished visual assets instead of bland placeholders
+
+---
+
+### [Phase 5.13] - Coding job dedupe + resume replay fixes + preferred dev host URLs
+
+**Modified files:** `tools/coding_tools.py`, `api/conversations.py`, `services/job_service.py`,
+`services/resume_event_service.py`, `api/internal/jobs.py`, `api/internal/openclaw_callback.py`,
+`ws/voice_handler.py`, `tools/openclaw_coding_tool.py`
+
+#### Duplicate website builds are now suppressed before they create extra jobs
+
+- coding confirmation now reuses the existing queued/running coding job for the conversation
+  instead of creating a second one when confirmation lands twice
+- pending PRD actions are resolved with an atomic `status='pending' -> 'resolved'` update so
+  only one request claims the build
+
+#### Resume events are now idempotent per job
+
+- `create_resume_event()` now reuses an existing event for the same `job_id + event_type`
+- duplicate callbacks no longer create extra notification badges or extra FCM pushes
+
+#### Completed build results are persisted into chat history
+
+- when a job finishes while the user is away, the backend now stores the completion summary as
+  an assistant turn before the next reconnect
+- result URLs therefore appear in the conversation history immediately after opening the chat
+  from a notification
+
+#### Resume reconnect now starts with the project result, not a generic greeting
+
+- `ws/voice_handler.py` now injects a stricter resume prompt: state the completed project news
+  first, mention the URL once when available, then offer next steps
+- pending resume events are acknowledged synchronously after the resume prompt is prepared so a
+  fast reconnect does not replay the same job result again
+
+#### Preferred Tailscale/dev host can now rewrite returned project URLs
+
+- coding jobs accept `preferred_network_host` from the app
+- OpenClaw result URLs are normalized so the backend keeps the runtime port and swaps only the
+  host/domain to the user’s preferred Tailscale address when configured
+
+---
+
 ### [Phase 5.11] - Hybrid live chat text input over the voice WebSocket
 
 **Modified files:** `ws/voice_handler.py`
