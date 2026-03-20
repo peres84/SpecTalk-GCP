@@ -77,9 +77,16 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -1076,7 +1083,7 @@ private fun TurnBubble(turn: ConversationTurn) {
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.52f),
                             fontWeight = FontWeight.SemiBold,
                         )
-                        Text(
+                        LinkableText(
                             text = assistantParts.reasoning,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
@@ -1092,14 +1099,14 @@ private fun TurnBubble(turn: ConversationTurn) {
                             color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.78f),
                             fontWeight = FontWeight.SemiBold,
                         )
-                        Text(
+                        LinkableText(
                             text = assistantParts.spoken,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
                 } else {
-                    Text(
+                    LinkableText(
                         text = turn.text.stripMarkdown(),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -1165,3 +1172,60 @@ private fun String.stripMarkdown(): String = this
     .replace(Regex("""#{1,6} """), "")
     .replace(Regex("""`(.+?)`""")) { it.groupValues[1] }
     .trim()
+
+private val urlPattern = Regex(
+    """https?://[^\s<>\[\]()\"']+""",
+    RegexOption.IGNORE_CASE,
+)
+
+@Composable
+private fun LinkableText(
+    text: String,
+    style: androidx.compose.ui.text.TextStyle,
+    color: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+) {
+    val linkColor = MaterialTheme.colorScheme.primary
+    val matches = remember(text) { urlPattern.findAll(text).toList() }
+
+    if (matches.isEmpty()) {
+        Text(text = text, style = style, color = color, modifier = modifier)
+        return
+    }
+
+    val annotated = remember(text, linkColor) {
+        buildAnnotatedString {
+            var cursor = 0
+            for (match in matches) {
+                if (match.range.first > cursor) {
+                    append(text.substring(cursor, match.range.first))
+                }
+                val url = match.value
+                withLink(
+                    LinkAnnotation.Url(
+                        url = url,
+                        styles = TextLinkStyles(
+                            style = SpanStyle(
+                                color = linkColor,
+                                textDecoration = TextDecoration.Underline,
+                            ),
+                        ),
+                    ),
+                ) {
+                    append(url)
+                }
+                cursor = match.range.last + 1
+            }
+            if (cursor < text.length) {
+                append(text.substring(cursor))
+            }
+        }
+    }
+
+    Text(
+        text = annotated,
+        style = style,
+        color = color,
+        modifier = modifier,
+    )
+}
