@@ -10,6 +10,54 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Hotfix] - Dockerfile lockfile pinning + config secret stripping
+
+**Modified files:** `Dockerfile`, `config.py`
+
+---
+
+#### `Dockerfile` — pin dependencies via `uv.lock`
+
+**Root cause of "Cannot extract voices from a non-audio request" on Cloud Run:**
+
+The Dockerfile was copying only `pyproject.toml` before running `uv sync`, without
+copying `uv.lock`. Since `pyproject.toml` declares `google-adk>=1.0.0`, every Docker
+build resolved and installed the **latest** ADK version rather than the lockfile-pinned
+`1.1.1`. A newer ADK version introduced breaking changes to the RunConfig API that
+caused Gemini to reject every Live session at connection time with error 1007.
+
+Fix: copy `uv.lock` alongside `pyproject.toml` and use `uv sync --frozen --no-dev` so
+the build always installs the exact versions pinned in the lockfile.
+
+```dockerfile
+# Before (broken — installs latest ADK on every build)
+COPY pyproject.toml .
+RUN uv sync --no-dev
+
+# After (correct — installs lockfile-pinned versions)
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+```
+
+**Rule going forward:** whenever adding or upgrading a dependency, run `uv add <pkg>`
+(which updates `uv.lock`) and commit both `pyproject.toml` and `uv.lock` together.
+
+---
+
+#### `config.py` — strip trailing whitespace from all secret values
+
+Secrets stored in GCP Secret Manager via Windows tools (PowerShell `echo`, copy-paste)
+often include a trailing `\r\n`. This caused `httpx.LocalProtocolError: Illegal header
+value` in the Opik health check probe and would affect any secret used as an HTTP
+header value.
+
+Added a universal `@field_validator("*", mode="before")` that strips leading/trailing
+whitespace from all string settings at load time. This is a defensive measure — secrets
+should be stored cleanly, but the validator prevents a stale `\r\n` from taking down
+the service.
+
+---
+
 ### [Phase 5.4] - OpenClaw context chaining + nginx deploy + path/URL parsing
 
 **Modified files:** `tools/openclaw_coding_tool.py`
