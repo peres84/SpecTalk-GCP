@@ -6,7 +6,10 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -39,6 +42,7 @@ fun SpecTalkNavGraph() {
     val scope = rememberCoroutineScope()
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    var drawerReady by remember { mutableStateOf(false) }
 
     // Track current route to control drawer visibility and highlight
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -51,11 +55,14 @@ fun SpecTalkNavGraph() {
     fun closeDrawer() = scope.launch { drawerState.close() }
 
     LaunchedEffect(Unit) {
-        drawerState.close()
+        drawerState.snapTo(DrawerValue.Closed)
+        drawerReady = true
     }
 
-    LaunchedEffect(showDrawer) {
-        if (!showDrawer && drawerState.isOpen) {
+    LaunchedEffect(currentRoute, showDrawer) {
+        if (!showDrawer) {
+            drawerState.snapTo(DrawerValue.Closed)
+        } else if (currentRoute == Screen.Home.route && drawerState.isOpen) {
             drawerState.close()
         }
     }
@@ -76,46 +83,7 @@ fun SpecTalkNavGraph() {
         }
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        gesturesEnabled = showDrawer,
-        drawerContent = {
-            if (showDrawer) {
-                val email = (authState as? AuthUiState.Authenticated)?.email ?: ""
-                AppDrawer(
-                    currentRoute = currentRoute,
-                    userEmail = email,
-                    onNavigateToHome = {
-                        closeDrawer()
-                        navController.navigate(Screen.Home.route) {
-                            popUpTo(Screen.Home.route) { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    },
-                    onNavigateToGallery = {
-                        closeDrawer()
-                        navController.navigate(Screen.Gallery.route) {
-                            popUpTo(Screen.Home.route) { inclusive = false }
-                            launchSingleTop = true
-                        }
-                    },
-                    onNavigateToSettings = {
-                        closeDrawer()
-                        navController.navigate(Screen.Settings.route) {
-                            launchSingleTop = true
-                        }
-                    },
-                    onSignOut = {
-                        closeDrawer()
-                        authViewModel.signOut()
-                        navController.navigate(Screen.Login.route) {
-                            popUpTo(Screen.Home.route) { inclusive = true }
-                        }
-                    },
-                )
-            }
-        },
-    ) {
+    val appContent: @Composable () -> Unit = {
         NavHost(navController = navController, startDestination = Screen.Splash.route) {
 
             composable(Screen.Splash.route) {
@@ -205,5 +173,53 @@ fun SpecTalkNavGraph() {
                 )
             }
         }
+    }
+
+    if (!drawerReady) {
+        appContent()
+        return
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = showDrawer,
+        drawerContent = {
+            if (showDrawer) {
+                val email = (authState as? AuthUiState.Authenticated)?.email ?: ""
+                AppDrawer(
+                    currentRoute = currentRoute,
+                    userEmail = email,
+                    onNavigateToHome = {
+                        closeDrawer()
+                        navController.navigate(Screen.Home.route) {
+                            popUpTo(Screen.Home.route) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+                    onNavigateToGallery = {
+                        closeDrawer()
+                        navController.navigate(Screen.Gallery.route) {
+                            popUpTo(Screen.Home.route) { inclusive = false }
+                            launchSingleTop = true
+                        }
+                    },
+                    onNavigateToSettings = {
+                        closeDrawer()
+                        navController.navigate(Screen.Settings.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onSignOut = {
+                        closeDrawer()
+                        authViewModel.signOut()
+                        navController.navigate(Screen.Login.route) {
+                            popUpTo(Screen.Home.route) { inclusive = true }
+                        }
+                    },
+                )
+            }
+        },
+    ) {
+        appContent()
     }
 }

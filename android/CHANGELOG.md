@@ -9,6 +9,16 @@ Newest entries at the top.
 
 ### Fixed
 
+#### Drawer now lands closed on app entry
+- `navigation/SpecTalkNavGraph.kt` now force-closes the drawer during startup and when returning
+  to the home route, preventing the sidebar from appearing open when the app first loads.
+
+#### Phone camera fallback no longer crashes the voice session
+- `ui/screens/VoiceSessionScreen.kt` now requests `CAMERA` permission before launching the
+  phone-camera fallback when Meta glasses are not being used.
+- If the permission is denied, the app stays in the active conversation and shows a snackbar
+  instead of trying to open the camera unsafely.
+
 #### Notification auto-resume now triggers immediately when wearable audio is connected
 - `notifications/FcmService.kt` now auto-resumes the target conversation immediately when a
   Meta wearable or Bluetooth audio device is connected, even if the manual
@@ -29,6 +39,13 @@ Newest entries at the top.
   left over from previous sessions.
 
 ### Added
+
+#### In-app phone conversation mode and transcript refresh
+- `ui/screens/VoiceSessionScreen.kt` now makes the non-wearable behavior explicit: if the user
+  has the app open, they can still talk with Gervis through the phone mic and speaker, but this
+  remains an app-open-only interaction and does not change the wake-word rules.
+- The conversation view now has a clearer transcript panel, stronger session-state labeling, and
+  explicit `You` / `Gervis` turn labels for better readability during live voice sessions.
 
 #### `GlassesCameraManager` — Meta DAT camera capture
 - New `object GlassesCameraManager` in `device/GlassesCameraManager.kt` wrapping the DAT
