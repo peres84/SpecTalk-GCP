@@ -133,13 +133,30 @@ async def enqueue_cloud_task(
 
         handler_url = f"{settings.backend_base_url}/internal/jobs/execute"
 
+        http_request: dict = {
+            "http_method": tasks_v2.HttpMethod.POST,
+            "url": handler_url,
+            "headers": {"Content-Type": "application/json"},
+            "body": task_body,
+        }
+
+        # Add OIDC token so Cloud Tasks can authenticate to Cloud Run
+        if settings.cloud_run_service_account:
+            http_request["oidc_token"] = {
+                "service_account_email": settings.cloud_run_service_account,
+                "audience": handler_url,
+            }
+            logger.debug(
+                f"Cloud Tasks OIDC token: {settings.cloud_run_service_account}"
+            )
+        else:
+            logger.warning(
+                "CLOUD_RUN_SERVICE_ACCOUNT not set — Cloud Tasks request will not "
+                "have OIDC auth. Cloud Run will reject it with 403."
+            )
+
         task: dict = {
-            "http_request": {
-                "http_method": tasks_v2.HttpMethod.POST,
-                "url": handler_url,
-                "headers": {"Content-Type": "application/json"},
-                "body": task_body,
-            },
+            "http_request": http_request,
             "dispatch_deadline": duration_pb2.Duration(seconds=1800),
         }
 

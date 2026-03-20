@@ -44,6 +44,12 @@ async def request_clarification(question: str, tool_context: ToolContext) -> str
     state = tool_context.state if tool_context else {}
     conversation_id: str = state.get("conversation_id", "")
 
+    if conversation_id:
+        try:
+            opik.update_current_trace(thread_id=conversation_id)
+        except Exception:
+            pass
+
     count = state.get("clarification_count", 0)
     state["clarification_count"] = count + 1
     state["pending_clarification"] = question
@@ -96,6 +102,12 @@ async def generate_and_confirm_prd(
 
     state = tool_context.state if tool_context else {}
     conversation_id: str = state.get("conversation_id", "")
+
+    if conversation_id:
+        try:
+            opik.update_current_trace(thread_id=conversation_id)
+        except Exception:
+            pass
 
     # Parse clarifications
     clarifications: dict = {}
@@ -188,6 +200,17 @@ async def confirm_and_dispatch(
 
     state = tool_context.state if tool_context else {}
     conversation_id: str = state.get("conversation_id", "")
+
+    logger.info(
+        f"[{conversation_id}] confirm_and_dispatch called: confirmed={confirmed}, "
+        f"change_request={change_request!r:.80}"
+    )
+
+    if conversation_id:
+        try:
+            opik.update_current_trace(thread_id=conversation_id)
+        except Exception:
+            pass
 
     # Find the most recent pending action for this conversation
     pending_action_id: uuid.UUID | None = None

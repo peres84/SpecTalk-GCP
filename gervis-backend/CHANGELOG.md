@@ -10,6 +10,36 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.5] - Cloud Tasks OIDC auth + Opik conversation threading
+
+**Modified files:** `services/job_service.py`, `tools/coding_tools.py`
+
+#### `services/job_service.py` — OIDC token for Cloud Tasks → Cloud Run
+
+Cloud Tasks tasks were enqueued without OIDC authentication, causing Cloud Run to reject
+every callback with HTTP 403. Fixed by adding `oidc_token` to the HTTP request when
+`CLOUD_RUN_SERVICE_ACCOUNT` is configured.
+
+```python
+http_request["oidc_token"] = {
+    "service_account_email": settings.cloud_run_service_account,
+    "audience": handler_url,
+}
+```
+
+Logs a warning (not silent) if the service account is missing, so misconfiguration is
+immediately visible in Cloud Run logs.
+
+#### `tools/coding_tools.py` — Opik thread_id linking + confirm_and_dispatch entry log
+
+- All three coding tools now call `opik.update_current_trace(thread_id=conversation_id)`
+  so every tool span appears under the correct conversation thread in the Opik dashboard.
+- Added `INFO` log at entry of `confirm_and_dispatch` to confirm the tool is reached in
+  production (was invisible in logs, making it impossible to distinguish "tool not called"
+  from "job creation failed silently").
+
+---
+
 ### [Hotfix] - Dockerfile lockfile pinning + config secret stripping
 
 **Modified files:** `Dockerfile`, `config.py`
