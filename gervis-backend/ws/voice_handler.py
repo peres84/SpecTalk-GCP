@@ -61,6 +61,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Per-conversation turn buffer: accumulates text fragments until turn_complete,
+# then flushes as a single Opik span.  Keeps Opik from creating one span per
+# audio chunk instead of one span per complete utterance.
+# Structure: { conversation_id: { "user": ["frag1", "frag2", ...], "model": [...] } }
+_turn_buffer: dict[str, dict[str, list[str]]] = {}
+
 
 def _extract_jwt(websocket: WebSocket, token: str | None) -> dict | None:
     """Extract and verify JWT from query param or Authorization header."""
@@ -137,6 +143,9 @@ async def _downstream_task(
 
     CRITICAL: interrupted events are sent BEFORE any further audio.
     """
+    # Initialise per-turn text buffer for this conversation
+    _turn_buffer[conversation_id] = {"user": [], "model": []}
+
     try:
         async for event in live_events:
             if websocket.client_state != WebSocketState.CONNECTED:
@@ -148,11 +157,20 @@ async def _downstream_task(
             if event.interrupted:
                 await websocket.send_text(json.dumps({"type": "interrupted"}))
                 logger.debug(f"[{conversation_id}] interrupted forwarded to phone")
+                # Flush and reset buffer on barge-in so the next turn starts clean
+                _turn_buffer[conversation_id] = {"user": [], "model": []}
                 continue
 
             if not event.content:
                 if event.turn_complete:
                     await websocket.send_text(json.dumps({"type": "turn_complete"}))
+                    # Flush buffered turn text as a SINGLE Opik span per role
+                    buf = _turn_buffer.get(conversation_id, {})
+                    for role, fragments in buf.items():
+                        if fragments:
+                            full_text = " ".join(fragments)
+                            record_voice_turn_opik(conversation_id, role, full_text)
+                    _turn_buffer[conversation_id] = {"user": [], "model": []}
                 continue
 
             for part in event.content.parts:
@@ -168,7 +186,8 @@ async def _downstream_task(
                                 persist_turn(conversation_id, "user", part.text, "voice_transcript")
                             )
                             record_voice_turn(conversation_id, "user", part.text)
-                            record_voice_turn_opik(conversation_id, "user", part.text)
+                            # Accumulate into buffer; flush on turn_complete
+                            _turn_buffer.setdefault(conversation_id, {"user": [], "model": []})["user"].append(part.text)
 
                     elif event.content.role == "model":
                         await websocket.send_text(json.dumps({
@@ -181,13 +200,21 @@ async def _downstream_task(
                                 persist_turn(conversation_id, "assistant", part.text, "voice_transcript")
                             )
                             record_voice_turn(conversation_id, "assistant", part.text)
-                            record_voice_turn_opik(conversation_id, "assistant", part.text)
+                            # Accumulate into buffer; flush on turn_complete
+                            _turn_buffer.setdefault(conversation_id, {"user": [], "model": []})["model"].append(part.text)
 
                 elif part.inline_data and part.inline_data.mime_type.startswith("audio/pcm"):
                     await websocket.send_bytes(part.inline_data.data)
 
             if event.turn_complete:
                 await websocket.send_text(json.dumps({"type": "turn_complete"}))
+                # Flush buffered turn text as a SINGLE Opik span per role
+                buf = _turn_buffer.get(conversation_id, {})
+                for role, fragments in buf.items():
+                    if fragments:
+                        full_text = " ".join(fragments)
+                        record_voice_turn_opik(conversation_id, role, full_text)
+                _turn_buffer[conversation_id] = {"user": [], "model": []}
 
     except WebSocketDisconnect:
         pass
@@ -314,6 +341,7 @@ async def voice_websocket(
 
         log_session_end(conversation_id)
         opik_session_end(conversation_id)
+        _turn_buffer.pop(conversation_id, None)
         logger.info(f"[{conversation_id}] Phone disconnected, starting grace timer")
         location_channels.unregister(conversation_id)
         control_channels.unregister(conversation_id)

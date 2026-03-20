@@ -116,12 +116,7 @@ async def enqueue_cloud_task(
         from google.cloud import tasks_v2  # type: ignore[import]
         from google.protobuf import duration_pb2  # type: ignore[import]
 
-        client = tasks_v2.CloudTasksClient()
-        parent = client.queue_path(
-            settings.gcp_project,
-            settings.cloud_tasks_location,
-            settings.cloud_tasks_queue,
-        )
+        handler_url = f"{settings.backend_base_url}/internal/jobs/execute"
 
         task_body = json.dumps({
             "job_id": job_id,
@@ -131,8 +126,6 @@ async def enqueue_cloud_task(
             "payload": payload or {},
         }).encode()
 
-        handler_url = f"{settings.backend_base_url}/internal/jobs/execute"
-
         http_request: dict = {
             "http_method": tasks_v2.HttpMethod.POST,
             "url": handler_url,
@@ -140,14 +133,17 @@ async def enqueue_cloud_task(
             "body": task_body,
         }
 
-        # Add OIDC token so Cloud Tasks can authenticate to Cloud Run
+        # Add OIDC token so Cloud Tasks can authenticate to Cloud Run.
+        # Audience MUST be the Cloud Run service base URL (no path) — not the handler URL.
+        # Cloud Run validates the token against the service URL, not the specific endpoint.
         if settings.cloud_run_service_account:
             http_request["oidc_token"] = {
                 "service_account_email": settings.cloud_run_service_account,
-                "audience": handler_url,
+                "audience": settings.backend_base_url,
             }
-            logger.debug(
-                f"Cloud Tasks OIDC token: {settings.cloud_run_service_account}"
+            logger.info(
+                f"Cloud Tasks OIDC: sa={settings.cloud_run_service_account} "
+                f"audience={settings.backend_base_url}"
             )
         else:
             logger.warning(
@@ -160,7 +156,20 @@ async def enqueue_cloud_task(
             "dispatch_deadline": duration_pb2.Duration(seconds=1800),
         }
 
-        client.create_task(request={"parent": parent, "task": task})
+        # CloudTasksClient is synchronous — run in executor to avoid blocking event loop
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        def _create():
+            c = tasks_v2.CloudTasksClient()
+            parent = c.queue_path(
+                settings.gcp_project,
+                settings.cloud_tasks_location,
+                settings.cloud_tasks_queue,
+            )
+            return c.create_task(request={"parent": parent, "task": task})
+
+        await loop.run_in_executor(None, _create)
         logger.info(f"Cloud Tasks task enqueued for job {job_id}")
 
     except ImportError:

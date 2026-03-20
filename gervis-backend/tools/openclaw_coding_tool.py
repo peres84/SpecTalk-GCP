@@ -18,6 +18,7 @@ import json
 import logging
 
 import httpx
+import opik
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,12 @@ async def _get_last_response_id(conversation_id: str) -> str | None:
     return None
 
 
+@opik.track(
+    name="execute_coding_job",
+    project_name="gervis",
+    capture_input=True,
+    capture_output=True,
+)
 async def execute_coding_job(
     job_id: str,
     conversation_id: str,
@@ -65,6 +72,12 @@ async def execute_coding_job(
     Returns:
         Dict with spoken_summary, display_summary, and optional artifacts.
     """
+    # Link this Opik trace to the conversation thread
+    try:
+        opik.update_current_trace(thread_id=conversation_id)
+    except Exception:
+        pass
+
     from api.integrations import get_decrypted_integration
 
     prd = payload.get("prd", {})

@@ -10,6 +10,43 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.6] - Opik turn merging + openclaw tracking + Cloud Tasks fixes
+
+**Modified files:** `services/tracing.py`, `ws/voice_handler.py`, `tools/openclaw_coding_tool.py`, `services/job_service.py`
+
+#### `services/tracing.py` — set env vars so `@opik.track` uses global config
+
+`@opik.track` decorators read from `OPIK_API_KEY` / `OPIK_WORKSPACE` env vars (global config),
+while the voice session code uses a manually constructed `opik.Opik()` client. Previously only
+the client was configured; the decorator-based tracking had no guarantee it was pointing at the
+right workspace. Now `_setup_opik()` calls `os.environ.setdefault(...)` after reading from
+settings, so both the client and decorators use the same credentials.
+
+#### `ws/voice_handler.py` — per-turn Opik buffer (one span per utterance)
+
+Gemini Live emits multiple final text chunks per turn (one per sentence/utterance). Previously
+each chunk triggered a separate `record_voice_turn_opik()` call, creating many fragmented spans.
+Now `_turn_buffer` accumulates all final fragments during a turn and flushes them as a single
+joined span on `turn_complete`. Barge-in resets the buffer immediately.
+
+#### `tools/openclaw_coding_tool.py` — `@opik.track` on `execute_coding_job`
+
+The OpenClaw coding executor had no Opik tracking at all. Added `@opik.track` with
+`thread_id=conversation_id` so the full coding job (PRD → OpenClaw → result) appears in the
+Opik trace timeline alongside the other coding tools.
+
+#### `services/job_service.py` — OIDC audience + async executor
+
+Two bugs fixed:
+1. **Wrong OIDC audience**: was `handler_url` (e.g. `.../internal/jobs/execute`). Cloud Run
+   validates OIDC tokens against the **service base URL** (no path). Fixed to use
+   `settings.backend_base_url`.
+2. **Sync client blocking event loop**: `CloudTasksClient()` is synchronous. Was called directly
+   in an `async` function, blocking the event loop during gRPC I/O. Fixed with
+   `loop.run_in_executor(None, _create)`.
+
+---
+
 ### [Phase 5.5] - Cloud Tasks OIDC auth + Opik conversation threading
 
 **Modified files:** `services/job_service.py`, `tools/coding_tools.py`

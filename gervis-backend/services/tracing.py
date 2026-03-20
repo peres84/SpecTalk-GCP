@@ -91,6 +91,16 @@ def _setup_opik() -> None:
         return
     try:
         import opik
+
+        # Set env vars so @opik.track decorators (which use global config) work
+        # alongside the manual opik.Opik() client used for voice session traces.
+        # On Cloud Run these are already set via Secret Manager injection, so
+        # setdefault won't override them.
+        import os
+        os.environ.setdefault("OPIK_API_KEY", settings.opik_api_key)
+        os.environ.setdefault("OPIK_WORKSPACE", settings.opik_workspace)
+        os.environ.setdefault("OPIK_PROJECT_NAME", settings.opik_project_name)
+
         # Do NOT call opik.configure() — it's a CLI wizard, not a server API.
         # Pass api_key, workspace, project_name directly to constructor.
         _opik_client = opik.Opik(
