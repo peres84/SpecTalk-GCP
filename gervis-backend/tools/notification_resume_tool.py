@@ -48,6 +48,17 @@ async def start_background_job(
     state = tool_context.state if tool_context else {}
     conversation_id: str | None = state.get("conversation_id")
 
+    logger.info(
+        f"start_background_job INVOKED: job_type={job_type}, "
+        f"conversation_id={conversation_id}, description={description[:80]}"
+    )
+
+    if conversation_id:
+        try:
+            opik.update_current_trace(thread_id=conversation_id)
+        except Exception:
+            pass
+
     if not conversation_id:
         logger.warning("start_background_job: no conversation_id in session state")
         return {

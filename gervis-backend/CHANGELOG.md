@@ -10,6 +10,50 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.7] - Turn merging fix + job creation fix + Opik completeness
+
+**Modified files:** `ws/voice_handler.py`, `agents/orchestrator.py`, `tools/coding_tools.py`, `tools/notification_resume_tool.py`
+
+#### `ws/voice_handler.py` — buffer turns and flush on turn_complete (fixes KNOWN_ISSUES #2)
+
+Gemini Live emits multiple "final" (non-partial) text chunks per utterance — one per word or
+phrase. Previously each chunk triggered a separate `persist_turn()` call, creating 10-20 DB
+rows per sentence (confirmed: 96 fragmented rows for one conversation in production).
+
+**Before:** `persist_turn()` called on every non-partial chunk → one DB row per word.
+**After:** Text fragments buffered in `_turn_buffer[conversation_id][role]` during streaming.
+New `_flush_turn_buffer()` joins fragments and persists ONE row per role on `turn_complete`.
+
+Buffer is also flushed on disconnect (`finally` block) and reset on `interrupted` (barge-in).
+OTel and Opik spans are now emitted from the same flush, using the merged text.
+
+#### `agents/orchestrator.py` — force tool invocation in system prompt (fixes KNOWN_ISSUES #1)
+
+The Gemini model was **narrating** tool calls instead of executing them. Production DB showed
+0 jobs despite the model saying "Initiating the Code" with markdown formatting. The model
+generated speech about calling functions instead of actually invoking them.
+
+Fixes:
+- Added explicit "MUST call the FUNCTION" and "do NOT narrate" language throughout
+- Prohibited markdown: "NEVER use **bold**, *italic*, ## headers" — model was outputting
+  `**Initiating the Code**` which is wrong for spoken output
+- Added "the job is only created when the function is called" to close the narration loophole
+- Added "Saying 'I'll start a job' is NOT the same as calling the function"
+
+#### `tools/coding_tools.py` — defensive logging + early return
+
+Added `INVOKED` entry log to `confirm_and_dispatch` to distinguish "tool never called" from
+"tool called but failed silently". Added early return with error message if `conversation_id`
+is missing from session state.
+
+#### `tools/notification_resume_tool.py` — INVOKED log + Opik thread linking (fixes KNOWN_ISSUES #3)
+
+Added `INVOKED` entry log for production debugging. Added
+`opik.update_current_trace(thread_id=conversation_id)` so the tool's Opik trace appears
+under the correct conversation thread (was missing; coding_tools already had this).
+
+---
+
 ### [Phase 5.6] - Opik turn merging + openclaw tracking + Cloud Tasks fixes
 
 **Modified files:** `services/tracing.py`, `ws/voice_handler.py`, `tools/openclaw_coding_tool.py`, `services/job_service.py`

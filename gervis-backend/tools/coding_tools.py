@@ -202,9 +202,13 @@ async def confirm_and_dispatch(
     conversation_id: str = state.get("conversation_id", "")
 
     logger.info(
-        f"[{conversation_id}] confirm_and_dispatch called: confirmed={confirmed}, "
+        f"[{conversation_id}] confirm_and_dispatch INVOKED: confirmed={confirmed}, "
         f"change_request={change_request!r:.80}"
     )
+
+    if not conversation_id:
+        logger.error("confirm_and_dispatch: no conversation_id in session state — cannot create job")
+        return "I had trouble processing that. Please try again."
 
     if conversation_id:
         try:

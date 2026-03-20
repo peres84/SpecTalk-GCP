@@ -1,99 +1,166 @@
 # Known Issues
 
-Last updated: 2026-03-19
+## Priority 1 (Critical - Blocking Functionality)
 
-This document tracks active issues that are important for day-to-day development and release readiness.
-It is a support document, not the source of truth for ownership or prioritization. Use the team issue tracker
-for assignment, status changes, and implementation planning.
+### 1. Jobs Not Created for Agent Tasks
+**Status**: Fix deployed — prompt strengthened + defensive logging added
+**Impact**: Users requesting coding assistance, research, or complex tasks get no job tracking
+**Root Cause**: Gemini model was narrating tool calls (e.g. "Initiating the Code") instead of actually invoking `confirm_and_dispatch` / `start_background_job` as function calls. The model produced markdown-formatted speech instead of executing tool functions.
 
-## Frontend Agent
+**Symptoms**:
+- Users ask agent: "Help me build a web app", "Research this API", "Write me a function"
+- No corresponding job entry created in `jobs` table
+- No way to track task progress or completion
+- UI has nothing to display/track
 
-### [HIGH] Auto-open on job completion notification does not open the related conversation
+**Investigation**:
+```bash
+# Check if jobs exist for recent conversations
+uv run python scripts/db_query.py jobs --limit 20
 
-Status: **Resolved** (2026-03-20)
-Area: Android app / Frontend agent
-Environment: Local device
+# Check agent orchestrator logs
+gcloud run services logs read gervis-backend --region=us-central1 --project=spectalk-488516 --limit=50
+```
 
-Summary:
-When a job-complete notification arrives and the user has enabled the setting `auto-open on job complete`,
-the app should automatically open the conversation tied to that notification and clearly inform the user what
-is happening. Right now, the flow only works when the user taps the notification manually.
+**Fix applied**:
+1. `orchestrator.py` — Strengthened system prompt: explicitly says "MUST call the FUNCTION", "do NOT narrate", "the job is only created when the function is called". Added anti-markdown rules.
+2. `tools/coding_tools.py` — Added `INVOKED` entry log + early return if conversation_id missing.
+3. `tools/notification_resume_tool.py` — Added `INVOKED` entry log + Opik thread linking.
+4. **Verification**: After deploy, search Cloud Run logs for `INVOKED` to confirm tools are being called. If still 0 jobs, the model is still narrating — may need to switch to a more instruction-following model.
 
-Expected behavior:
-- The app reads the conversation ID from the incoming notification.
-- If `auto-open on job complete` is enabled, the app opens that specific conversation automatically.
-- The agent/UI tells the user that the completed job is ready and that the related conversation has been opened.
+---
 
-Actual behavior:
-- The toggle is present in settings, but the automatic open flow does not complete.
-- The conversation only opens when the notification is tapped manually.
+### 2. Turns Saved in Streaming Chunks Instead of Complete Turn
+**Status**: Fixed
+**Impact**: Incomplete conversation history, hard to debug, bad for Opik tracking
+**Root Cause**: `voice_handler.py` called `persist_turn()` on every non-partial text chunk. Gemini Live sends multiple "final" chunks per utterance (one per word/phrase), each creating a separate DB row.
 
-Impact:
-- Creates inconsistency between the setting and the actual behavior.
-- Makes job completion feel unreliable and harder to trust.
+**Symptoms**:
+- `turns` table contains partial/intermediate transcripts
+- Can't see full user utterance in a single turn record
+- When Gemini interrupts, user turn gets fragmented
+- Opik logs show incomplete input/output pairs
+- Difficult to reconstruct user intent from turn history
 
-Notes:
-- Verify end-to-end handling across FCM reception, notification routing, navigation, and conversation restoration.
-- Confirm that the notification payload includes the correct conversation ID and that it is propagated into navigation.
+**Current Behavior**:
+```
+Turn saved: "Hey, I want to"  (chunk 1)
+Turn saved: "build a"         (chunk 2)
+Turn saved: "web app"         (chunk 3 - final)
+```
 
-### [MEDIUM] Wake confirmation sound plays before Gemini connection is ready
+**Expected Behavior**:
+```
+Turn saved (user): "Hey, I want to build a web app"  (complete, after VAD detects silence)
+Turn saved (assistant): "I can help with that! Let me create..."  (complete, after output finishes)
+```
 
-Status: **Resolved** (2026-03-20)
-Area: Android app / Voice UX
-Environment: Local device
+**Fix applied** (`voice_handler.py`):
+1. Removed per-chunk `persist_turn()` and `record_voice_turn()` calls from the streaming loop.
+2. Text fragments are buffered in `_turn_buffer[conversation_id][role]` during streaming.
+3. New `_flush_turn_buffer()` function joins all fragments with `" ".join()` and persists ONE turn row + ONE OTel span + ONE Opik span per role on `turn_complete`.
+4. Buffer is also flushed on disconnect (in `finally` block) so the last turn isn't lost.
+5. Buffer is reset on `interrupted` events (barge-in) so the next turn starts clean.
+6. No migration needed — same `turns` table, just fewer rows with complete text.
 
-Summary:
-The wake-word confirmation sound is currently triggered too early. The sound should play only when the Gemini
-connection is actually open and the app is in the `listening` state. Playing it before that gives the user
-false feedback that the agent is ready when it is not.
+---
 
-Expected behavior:
-- Trigger the wake confirmation sound only after the Gemini voice connection is established.
-- The sound should represent the exact moment the assistant is ready and listening.
+### 3. Opik Conversation Tracking Incomplete
+**Status**: Fixed (turns); tool traces linked via thread_id
+**Impact**: Agent behavior not debuggable, tool calls invisible
+**Root Cause**: Opik logged fragmented turns (fixed by Issue #2 fix). Tool `@opik.track` traces were not linked to conversation thread.
 
-Actual behavior:
-- The sound plays before the Gemini connection is fully open.
+**Symptoms**:
+- Opik shows incomplete turns (due to issue #2)
+- No visibility into tool selection or execution
+- Can't see tool input/output pairs
+- Can't trace failures to specific tool calls
 
-Impact:
-- Confusing voice interaction feedback.
-- Can cause users to begin speaking before audio capture and upstream connection are ready.
+**Fix applied**:
+1. Turn merging fixed by Issue #2 fix — `_flush_turn_buffer()` now sends one Opik span per complete turn.
+2. `start_background_job` now calls `opik.update_current_trace(thread_id=conversation_id)` to link to conversation thread (was missing; coding_tools already had this).
+3. All tool `@opik.track` decorators already capture input/output. With thread_id linking, tool traces now appear in the correct conversation thread in the Opik dashboard.
 
-Notes:
-- Align sound playback with the same state transition that marks the session as ready to listen.
-- Review hotword detection, session startup, and backend voice connection handshake timing.
+---
 
-## Backend Agent
+## Priority 2 (High - Data Quality)
 
-### [HIGH] Current Google Cloud observability is not enough to reliably debug agent behavior
+### 4. Resume Events Not Being Created
+**Status**: Open
+**Impact**: No way to track job completion or resume conversation flow
+**Symptoms**:
+- `resume_events` table is empty
+- Jobs complete but no event published
+- Phone doesn't know when to resume listening
 
-Status: Open
-Area: Backend agent / Observability
-Environment: Google Cloud
+**Solution**:
+- Emit `ResumeEvent` when job completes (success or failure)
+- Publish event to WebSocket so phone can notify user
 
-Summary:
-The current Google Cloud observability setup is not sufficient for reliably tracking agent conversations,
-logic flow, and debugging failures. Backend logs alone are not enough to explain why the agent responded in
-a certain way or where a workflow broke.
+---
 
-Expected behavior:
-- Developers can inspect a conversation end-to-end.
-- Developers can trace agent execution, tool usage, response generation, and failure points with enough detail
-  to debug production and staging issues.
+## Priority 3 (Medium - Polish)
 
-Actual behavior:
-- Tracing and debugging in Google Cloud are difficult and incomplete for current needs.
-- It is hard to follow conversation flow and logic execution across agent steps.
+### 5. Pending Actions Not Fully Integrated
+**Status**: Open
+**Impact**: User approval workflow incomplete
+**Symptoms**:
+- `pending_actions` created but not resolved
+- No feedback loop to agent on user approval/denial
 
-Impact:
-- Slows down debugging of production bugs.
-- Makes regressions and subtle workflow failures harder to isolate.
+---
 
-Planned improvement:
-- Re-implement Opik for agent observability and execution tracing.
-- Track agent conversations, spans, and logic execution under project name `gervis`.
-- Use Opik account username `javier-peres`.
-- Reference: https://www.comet.com/docs/opik/
+## Debugging Checklist
 
-Notes:
-- Define a consistent correlation key such as `flow_id` or `conversation_id` across Android, backend, and tracing.
-- Capture at least request metadata, tool calls, model responses, failures, and final user-visible outcomes.
+Use these commands when investigating issues:
+
+**Database State**:
+```bash
+# Summary of all data
+uv run python scripts/db_query.py summary
+
+# Check for jobs
+uv run python scripts/db_query.py jobs --limit 20
+
+# Check turns for a conversation
+uv run python scripts/db_query.py turns --conversation-id <UUID> --limit 50
+
+# Check resume events
+uv run python scripts/db_query.py resume-events
+```
+
+**Cloud Logs**:
+```bash
+# Recent backend logs
+gcloud run services logs read gervis-backend \
+  --region=us-central1 \
+  --project=spectalk-488516 \
+  --limit=50
+
+# Filter for errors
+gcloud run services logs read gervis-backend \
+  --region=us-central1 \
+  --project=spectalk-488516 \
+  --limit=100 | grep -i error
+```
+
+**Deployment**:
+```bash
+# After fixing issues, redeploy backend
+gcloud builds submit \
+  --config=gervis-backend/cloudbuild.yaml \
+  --project=spectalk-488516
+```
+
+---
+
+## Issue Resolution Process
+
+1. Create/update this file with issue description
+2. Investigate using the debugging checklist above
+3. Fix the code
+4. Test locally: `uv run uvicorn main:app --reload`
+5. Test with database using scripts/db_query.py
+6. Redeploy: `gcloud builds submit ...`
+7. Verify in logs and database
+8. Mark issue as "Resolved" with commit hash

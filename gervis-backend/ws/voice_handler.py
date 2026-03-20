@@ -134,6 +134,32 @@ async def _upstream_task(
                 logger.warning(f"[{conversation_id}] Malformed control message: {e}")
 
 
+async def _flush_turn_buffer(conversation_id: str) -> None:
+    """Flush the turn buffer: persist merged text to DB, Opik, and OTel.
+
+    Called on turn_complete and on disconnect. Each role's fragments are
+    joined into a single string and saved as ONE turn row (not per-chunk).
+    """
+    buf = _turn_buffer.get(conversation_id, {})
+    for role, fragments in buf.items():
+        if not fragments:
+            continue
+        full_text = " ".join(fragments).strip()
+        if not full_text:
+            continue
+        # Map ADK role names to DB role names
+        db_role = "assistant" if role == "model" else role
+        # Single DB row per complete turn
+        asyncio.create_task(
+            persist_turn(conversation_id, db_role, full_text, "voice_transcript")
+        )
+        # Single OTel span per complete turn
+        record_voice_turn(conversation_id, db_role, full_text)
+        # Single Opik span per complete turn
+        record_voice_turn_opik(conversation_id, role, full_text)
+    _turn_buffer[conversation_id] = {"user": [], "model": []}
+
+
 async def _downstream_task(
     websocket: WebSocket,
     live_events,
@@ -142,6 +168,9 @@ async def _downstream_task(
     """Forwards ADK events to the phone WebSocket.
 
     CRITICAL: interrupted events are sent BEFORE any further audio.
+
+    Text chunks are buffered per-role and flushed as a single DB row +
+    Opik span on turn_complete (fixes fragmented turn storage).
     """
     # Initialise per-turn text buffer for this conversation
     _turn_buffer[conversation_id] = {"user": [], "model": []}
@@ -164,13 +193,7 @@ async def _downstream_task(
             if not event.content:
                 if event.turn_complete:
                     await websocket.send_text(json.dumps({"type": "turn_complete"}))
-                    # Flush buffered turn text as a SINGLE Opik span per role
-                    buf = _turn_buffer.get(conversation_id, {})
-                    for role, fragments in buf.items():
-                        if fragments:
-                            full_text = " ".join(fragments)
-                            record_voice_turn_opik(conversation_id, role, full_text)
-                    _turn_buffer[conversation_id] = {"user": [], "model": []}
+                    await _flush_turn_buffer(conversation_id)
                 continue
 
             for part in event.content.parts:
@@ -182,11 +205,7 @@ async def _downstream_task(
                             "is_partial": bool(event.partial),
                         }))
                         if not event.partial:
-                            asyncio.create_task(
-                                persist_turn(conversation_id, "user", part.text, "voice_transcript")
-                            )
-                            record_voice_turn(conversation_id, "user", part.text)
-                            # Accumulate into buffer; flush on turn_complete
+                            # Buffer — do NOT persist yet; flush on turn_complete
                             _turn_buffer.setdefault(conversation_id, {"user": [], "model": []})["user"].append(part.text)
 
                     elif event.content.role == "model":
@@ -196,11 +215,7 @@ async def _downstream_task(
                             "is_partial": bool(event.partial),
                         }))
                         if not event.partial:
-                            asyncio.create_task(
-                                persist_turn(conversation_id, "assistant", part.text, "voice_transcript")
-                            )
-                            record_voice_turn(conversation_id, "assistant", part.text)
-                            # Accumulate into buffer; flush on turn_complete
+                            # Buffer — do NOT persist yet; flush on turn_complete
                             _turn_buffer.setdefault(conversation_id, {"user": [], "model": []})["model"].append(part.text)
 
                 elif part.inline_data and part.inline_data.mime_type.startswith("audio/pcm"):
@@ -208,13 +223,7 @@ async def _downstream_task(
 
             if event.turn_complete:
                 await websocket.send_text(json.dumps({"type": "turn_complete"}))
-                # Flush buffered turn text as a SINGLE Opik span per role
-                buf = _turn_buffer.get(conversation_id, {})
-                for role, fragments in buf.items():
-                    if fragments:
-                        full_text = " ".join(fragments)
-                        record_voice_turn_opik(conversation_id, role, full_text)
-                _turn_buffer[conversation_id] = {"user": [], "model": []}
+                await _flush_turn_buffer(conversation_id)
 
     except WebSocketDisconnect:
         pass
@@ -224,6 +233,9 @@ async def _downstream_task(
             await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
         except Exception:
             pass
+    finally:
+        # Flush any remaining buffered text so the last turn isn't lost
+        await _flush_turn_buffer(conversation_id)
 
 
 @router.websocket("/voice/{conversation_id}")
