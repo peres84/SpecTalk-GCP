@@ -24,16 +24,20 @@ def _build_run_config():
 
     supported = set(RunConfig.model_fields.keys())
 
-    # Do NOT set response_modalities — the native-audio model defaults to audio
-    # output and the Pydantic field expects a Modality enum instance. Passing a
-    # string literal triggers "Expected `enum` but got `str`" warnings, and
-    # passing types.Modality.AUDIO causes issues in some ADK versions. Omitting
-    # it entirely is both correct and warning-free.
     kwargs: dict = dict(
         streaming_mode="bidi",
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
     )
+
+    # Explicitly set AUDIO response modality — required by the native-audio
+    # model. Without this the Gemini Live API rejects the connection with
+    # "Cannot extract voices from a non-audio request" (error 1007).
+    if "response_modalities" in supported:
+        try:
+            kwargs["response_modalities"] = [types.Modality.AUDIO]
+        except AttributeError:
+            kwargs["response_modalities"] = ["AUDIO"]
 
     if "session_resumption" in supported:
         kwargs["session_resumption"] = types.SessionResumptionConfig(transparent=True)
