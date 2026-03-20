@@ -8,6 +8,7 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,10 +20,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -31,6 +36,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -46,10 +54,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.spectalk.app.SpecTalkApplication
 import com.spectalk.app.device.ConnectedDeviceMonitor
+import com.spectalk.app.integrations.IntegrationItem
+import com.spectalk.app.integrations.IntegrationsRepository
+import com.spectalk.app.integrations.SaveResult
 import com.spectalk.app.location.UserLocationRepository
 import com.spectalk.app.settings.AppPreferences
 import kotlinx.coroutines.launch
@@ -63,6 +76,27 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val locationRepository = remember { UserLocationRepository(context) }
     val deviceState by ConnectedDeviceMonitor.state.collectAsStateWithLifecycle()
+    val tokenRepository = remember { (context.applicationContext as SpecTalkApplication).tokenRepository }
+    val integrationsRepository = remember { IntegrationsRepository() }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // --- Integrations state ---
+    var integrations by remember { mutableStateOf<List<IntegrationItem>>(emptyList()) }
+    var integrationsLoading by remember { mutableStateOf(false) }
+    var showConnectForm by remember { mutableStateOf(false) }
+    var connectUrl by remember { mutableStateOf("") }
+    var connectToken by remember { mutableStateOf("") }
+    var connectBusy by remember { mutableStateOf(false) }
+
+    suspend fun reloadIntegrations() {
+        integrationsLoading = true
+        integrations = integrationsRepository.getIntegrations(tokenRepository.getProductJwt())
+        integrationsLoading = false
+    }
+
+    LaunchedEffect(Unit) {
+        reloadIntegrations()
+    }
 
     var wakeWord by remember { mutableStateOf(AppPreferences.getWakeWord(context)) }
     var locationSharingEnabled by remember {
@@ -125,11 +159,13 @@ fun SettingsScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -226,6 +262,73 @@ fun SettingsScreen(
                 onCheckedChange = { enabled ->
                     autoOpenOnNotification = enabled
                     AppPreferences.setAutoOpenOnNotification(context, enabled)
+                },
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "Integrations",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                if (integrationsLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                }
+            }
+
+            val openClaw = integrations.find { it.service == "openclaw" }
+
+            IntegrationRow(
+                item = openClaw,
+                showConnectForm = showConnectForm,
+                connectUrl = connectUrl,
+                connectToken = connectToken,
+                connectBusy = connectBusy,
+                onConnectUrl = { connectUrl = it },
+                onConnectToken = { connectToken = it },
+                onShowForm = { showConnectForm = true },
+                onDismissForm = {
+                    showConnectForm = false
+                    connectUrl = ""
+                    connectToken = ""
+                },
+                onSave = {
+                    scope.launch {
+                        connectBusy = true
+                        val result = integrationsRepository.saveIntegration(
+                            jwt = tokenRepository.getProductJwt(),
+                            service = "openclaw",
+                            url = connectUrl.trim(),
+                            token = connectToken.trim(),
+                        )
+                        connectBusy = false
+                        when (result) {
+                            is SaveResult.Success -> {
+                                showConnectForm = false
+                                connectUrl = ""
+                                connectToken = ""
+                                reloadIntegrations()
+                                snackbarHostState.showSnackbar(result.message)
+                            }
+                            is SaveResult.Error -> {
+                                snackbarHostState.showSnackbar(result.message)
+                            }
+                        }
+                    }
+                },
+                onDisconnect = {
+                    scope.launch {
+                        integrationsRepository.deleteIntegration(
+                            jwt = tokenRepository.getProductJwt(),
+                            service = "openclaw",
+                        )
+                        reloadIntegrations()
+                    }
                 },
             )
         }
@@ -397,6 +500,145 @@ private fun SettingsToggleRow(
             checked = checked,
             onCheckedChange = onCheckedChange,
         )
+    }
+}
+
+@Composable
+private fun IntegrationRow(
+    item: IntegrationItem?,
+    showConnectForm: Boolean,
+    connectUrl: String,
+    connectToken: String,
+    connectBusy: Boolean,
+    onConnectUrl: (String) -> Unit,
+    onConnectToken: (String) -> Unit,
+    onShowForm: () -> Unit,
+    onDismissForm: () -> Unit,
+    onSave: () -> Unit,
+    onDisconnect: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = "OpenClaw",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = "OpenClaw — AI coding agent",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+                if (item != null && item.connected) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                    ) {
+                        Text(
+                            text = "Connected · ${item.urlPreview}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                } else {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Text(
+                            text = "Not connected",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                }
+            }
+
+            if (item != null && item.connected) {
+                OutlinedButton(
+                    onClick = onDisconnect,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("Disconnect")
+                }
+            } else if (!showConnectForm) {
+                Button(onClick = onShowForm) {
+                    Text("Connect")
+                }
+            }
+        }
+
+        AnimatedVisibility(visible = showConnectForm) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "Connect OpenClaw",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+
+                OutlinedTextField(
+                    value = connectUrl,
+                    onValueChange = onConnectUrl,
+                    label = { Text("Base URL") },
+                    placeholder = { Text("https://your-machine.tail-xxxx.ts.net") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                OutlinedTextField(
+                    value = connectToken,
+                    onValueChange = onConnectToken,
+                    label = { Text("Hook Token") },
+                    placeholder = { Text("your-hook-token") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        onClick = onSave,
+                        enabled = connectUrl.isNotBlank() && connectToken.isNotBlank() && !connectBusy,
+                    ) {
+                        if (connectBusy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        } else {
+                            Text("Save")
+                        }
+                    }
+                    OutlinedButton(onClick = onDismissForm, enabled = !connectBusy) {
+                        Text("Cancel")
+                    }
+                }
+            }
+        }
     }
 }
 

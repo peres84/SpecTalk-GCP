@@ -5,6 +5,44 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — Integrations: OpenClaw connect/disconnect in Settings
+
+### Added
+
+#### `IntegrationsRepository` — new repository for `/integrations` API
+- `data class IntegrationItem(service, urlPreview, connected)` and
+  `sealed class SaveResult { Success(urlPreview, message) / Error(message) }`.
+- `getIntegrations(jwt)` — `GET /integrations`; returns empty list on any network or HTTP error.
+- `saveIntegration(jwt, service, url, token)` — `POST /integrations`; returns `SaveResult`.
+- `deleteIntegration(jwt, service)` — `DELETE /integrations/{service}`; returns Boolean.
+- Same OkHttp/`Dispatchers.IO` pattern as `ConversationRepository`.
+- **File:** `integrations/IntegrationsRepository.kt`
+
+#### `SettingsScreen` — "Integrations" section
+- New **Integrations** section at the bottom of Settings (below Notifications).
+- Section header includes an inline `CircularProgressIndicator` while the list is loading.
+- Integration status is loaded on screen entry via `LaunchedEffect(Unit)`.
+- **OpenClaw row** shows:
+  - Service name ("OpenClaw") + description ("OpenClaw — AI coding agent").
+  - Green pill "Connected · {url_preview}" when connected; grey pill "Not connected" otherwise.
+  - "Connect" button (not connected, form hidden) → expands inline connect form.
+  - "Disconnect" button (error color, connected) → calls `DELETE /integrations/openclaw`, reloads.
+- **Connect form** (`AnimatedVisibility`):
+  - Title: "Connect OpenClaw".
+  - "Base URL" `OutlinedTextField` (placeholder: `https://your-machine.tail-xxxx.ts.net`).
+  - "Hook Token" `OutlinedTextField` with `PasswordVisualTransformation`.
+  - "Save" button enabled only when both fields are non-blank; shows `CircularProgressIndicator`
+    while in-flight.
+  - On success: dismisses the form, reloads integration status, shows backend `message` field
+    ("Your credentials have been encrypted and stored securely.") as a `Snackbar`.
+  - On error: shows error message as a `Snackbar`.
+  - "Cancel" clears and collapses the form.
+- Credentials are passed once to the backend and immediately discarded — never stored on-device.
+- Added `SnackbarHost` to the existing `Scaffold` and `verticalScroll` to the content `Column`.
+- **File:** `ui/screens/SettingsScreen.kt`
+
+---
+
 ## [Unreleased] — Bug fixes: auto-open navigation + wake sound timing
 
 ### Fixed
