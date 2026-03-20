@@ -5,6 +5,114 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — UX redesign: Apple-inspired interaction across all screens
+
+### Changed
+
+#### `Type.kt` — Apple-like typography scale
+- Negative letter-spacing on large headings (`headlineLarge`: 34sp Bold, `headlineMedium`: 28sp
+  Bold) matching SF Pro proportions.
+- `bodyLarge` / `bodyMedium` / `bodySmall` sized at 17 / 15 / 13sp with subtle negative tracking
+  for a denser, more legible feel.
+- Added `titleMedium` (17sp SemiBold) and `labelLarge` (15sp SemiBold) to the scale so buttons
+  and row titles have consistent, purposeful weight.
+- **File:** `ui/theme/Type.kt`
+
+#### `SplashScreen.kt` — Scale-in animation
+- Added `animateFloatAsState` scale (0.88 → 1.0, 800ms `FastOutSlowInEasing`) alongside the
+  existing alpha fade — the logo now grows into place instead of just fading in.
+- Logo enlarged from 120dp → 140dp. "POWERED BY GERVIS" in uppercase with wide letter-spacing.
+- **File:** `ui/screens/SplashScreen.kt`
+
+#### `LoginScreen.kt` / `RegisterScreen.kt` — Apple-style auth forms
+- Replaced `OutlinedTextField` with a custom `AppleTextField` composable: `TextField` (filled
+  variant) with `surfaceVariant` container, transparent indicator line replaced by a subtle
+  focused primary underline, and `RoundedCornerShape(14.dp)`. Matches iOS text input aesthetics.
+- `AppleTextField` is `internal` and shared with `RegisterScreen`.
+- Heading enlarged to `headlineLarge` (34sp Bold). Subtitle at 50% alpha below.
+- Primary button: 56dp height, `RoundedCornerShape(16.dp)`. Google button same height.
+- Added `imePadding()` so the keyboard does not cover the fields.
+- Spacing tightened: 10dp between fields instead of 12dp; a single spacer handles error/no-error
+  transitions without a layout jump.
+- **Files:** `ui/screens/LoginScreen.kt`, `ui/screens/RegisterScreen.kt`
+
+#### `HomeScreen.kt` — Pill FAB + card rows + cleaner header
+- `FloatingActionButton` replaced with `ExtendedFloatingActionButton` ("Start talking" + mic
+  icon, `RoundedCornerShape(28.dp)`) positioned at `FabPosition.Center`. The primary action is
+  now thumb-reachable at the bottom center.
+- "Sign out" `TextButton` replaced with a `Icons.AutoMirrored.Filled.Logout` `IconButton` at
+  lower opacity in the top bar. Sign-out is also now available at the bottom of Settings.
+- Conversation rows replaced with `ConversationCard`: a `Card` with `RoundedCornerShape(16.dp)`,
+  `16.dp` horizontal margin, and `6.dp` vertical gap. `HorizontalDivider` between rows removed —
+  spacing alone creates visual separation.
+- Row layout: small 10dp colored-dot state indicator on the left; summary text + state chip +
+  timestamp in the content column; resume badge on the right.
+- Delete swipe background also clipped to `RoundedCornerShape(16.dp)` to match the card shape.
+- 96dp bottom spacer added so the FAB never overlaps the last conversation row.
+- **File:** `ui/screens/HomeScreen.kt`
+
+#### `VoiceSessionScreen.kt` — Immersive full-screen orb
+- Removed `TopAppBar`. Back button is an inline `IconButton` in a plain `Row` at the top of
+  the content column, with `statusBarsPadding()` — no Material chrome, no title bar background.
+- "Gervis" title centred using right-padding to balance the back button.
+- New `VoiceOrb` composable: four concentric `CircleShape` `Box`es (200dp outer ambient ring →
+  140dp middle ring → 100dp inner ring → 72dp core with mic icon). All rings share a single
+  `InfiniteTransition` pulse (scale 1.0 → 1.14); pulse speed varies by state (650ms mic active,
+  1100ms connected/connecting, no pulse when offline). Ring alpha scales with `isActive` state.
+- Orb color: gold (secondary) when mic streaming, amber (tertiary) while connecting, red
+  (primary) when connected, dim when offline.
+- Status text centered below orb in `titleMedium` SemiBold with orb color.
+- "End Session" button replaced with a minimal outlined pill (`widthIn(min=160dp)`,
+  `RoundedCornerShape(22.dp)`). Error color on text only — no error background.
+- Transcript chat bubbles: borders removed (background fill alone), corner radii increased to
+  20dp / 5dp for a modern message-bubble shape.
+- Fallback "project plan ready" message uses 20dp padding and a 20dp rounded surface.
+- **File:** `ui/screens/VoiceSessionScreen.kt`
+
+#### `SettingsScreen.kt` — iOS-grouped card sections + sign-out
+- All five sections (Voice, Devices, Location, Notifications, Integrations) each wrapped in a
+  new `SettingsGroup` composable: uppercase `labelSmall` section title above a `Surface` with
+  `RoundedCornerShape(16.dp)` and `tonalElevation = 1.dp` — matches iOS Settings visual rhythm.
+- `SettingsToggleRow` receives an explicit `modifier` parameter so padding lives at the call
+  site, not inside the composable.
+- Text fields inside sections use `RoundedCornerShape(12dp)` to match the grouped card style.
+- "Sign Out" destructive `TextButton` (error color, full-width, 52dp) added at the very bottom
+  of the scroll content — the standard Apple placement for a sign-out action.
+- `SettingsScreen` now accepts `onSignOut: () -> Unit = {}`. `SpecTalkNavGraph` passes
+  `authViewModel.signOut()` + navigation to Login.
+- **Files:** `ui/screens/SettingsScreen.kt`, `navigation/SpecTalkNavGraph.kt`
+
+#### `PrdConfirmationCard.kt` — Stacked CTAs + more breathing room
+- "Build it" and "Change something" buttons now stack **vertically** (full-width, 52dp height
+  each) instead of side-by-side. Larger touch targets; clearer visual hierarchy.
+- Horizontal padding increased from 20dp → 24dp, top corner radius 24dp → 28dp.
+- Handle bar width 36dp → 40dp at 60% alpha. Header top-alignment (was `CenterVertically`)
+  so long project names don't misalign the scope badge.
+- Change-request flow adds a "Cancel" button below "Send" so the user can exit without a tap
+  outside.
+- **File:** `ui/components/PrdConfirmationCard.kt`
+
+---
+
+## [Unreleased] — Handle session_timeout WebSocket message
+
+### Fixed
+
+#### Gemini Live 10-minute session limit shown as error instead of informational message [MEDIUM]
+- **Root cause:** The backend now sends `{"type": "session_timeout", "message": "..."}` when
+  the Gemini Live preview model's ~10-minute hard session limit is hit. Previously this arrived
+  as `{"type": "error"}` — indistinguishable from a real crash, triggering the red error state.
+- **Fix:** Added `VoiceClientEvent.SessionTimeout` to `VoiceClientEvent` sealed interface in
+  `BackendVoiceClient`. The `handleControlMessage` now dispatches `"session_timeout"` to this
+  new event instead of falling through to the `"error"` handler. `VoiceAgentViewModel` handles
+  `SessionTimeout` as a clean session teardown: flushes and stops `PcmAudioPlayer`, closes the
+  WebSocket, resumes `HotwordService`, and updates `statusMessage` with the backend's human-
+  readable message (e.g. "Session ended after 10 minutes. Say 'Hey Gervis' to continue."). No
+  `recentError` is set — the error color/screen is not shown.
+- **Files:** `voice/BackendVoiceClient.kt`, `voice/VoiceAgentViewModel.kt`
+
+---
+
 ## [Unreleased] — Integrations: OpenClaw connect/disconnect in Settings
 
 ### Added

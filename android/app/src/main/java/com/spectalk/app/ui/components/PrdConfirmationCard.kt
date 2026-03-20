@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Web
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -28,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -38,7 +41,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,10 +49,6 @@ import com.spectalk.app.voice.PrdSummary
 /**
  * PRD confirmation card shown at the bottom of [VoiceSessionScreen] when the backend
  * is in the "awaiting_confirmation" state.
- *
- * The user can tap "Build it" to confirm the plan, or "Change something" to enter a
- * text change request. Voice responses ("yes"/"no") are handled server-side — the card
- * dismisses automatically when the WebSocket delivers state_update: running_job / idle.
  */
 @Composable
 fun PrdConfirmationCard(
@@ -64,27 +62,27 @@ fun PrdConfirmationCard(
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             // Handle bar
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
-                    .size(width = 36.dp, height = 4.dp)
+                    .size(width = 40.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(MaterialTheme.colorScheme.outlineVariant),
+                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
             )
 
-            // ── Header: project name + scope badge ───────────────────────────
+            // ── Header: project name + scope badge ────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
@@ -94,23 +92,23 @@ fun PrdConfirmationCard(
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(12.dp))
                 ScopeBadge(scope = prdSummary.scopeEstimate)
             }
 
-            // ── Description ──────────────────────────────────────────────────
+            // ── Description ───────────────────────────────────────────────────
             if (prdSummary.description.isNotBlank()) {
                 Text(
                     text = prdSummary.description,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
                 )
             }
 
-            // ── Platform chip ────────────────────────────────────────────────
+            // ── Platform chip ─────────────────────────────────────────────────
             PlatformChip(platform = prdSummary.targetPlatform)
 
-            // ── Tech stack ───────────────────────────────────────────────────
+            // ── Tech stack ────────────────────────────────────────────────────
             if (prdSummary.techStack.isNotBlank()) {
                 Text(
                     text = prdSummary.techStack,
@@ -120,13 +118,13 @@ fun PrdConfirmationCard(
                 )
             }
 
-            // ── Key features ─────────────────────────────────────────────────
+            // ── Key features ──────────────────────────────────────────────────
             if (prdSummary.keyFeatures.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     prdSummary.keyFeatures.take(5).forEach { feature ->
                         Row(
                             verticalAlignment = Alignment.Top,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
                                 text = "•",
@@ -137,7 +135,7 @@ fun PrdConfirmationCard(
                             Text(
                                 text = feature,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                             )
                         }
                     }
@@ -145,56 +143,82 @@ fun PrdConfirmationCard(
             }
 
             HorizontalDivider(
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
             )
 
-            // ── Change request input (revealed on "Change something" tap) ────
+            // ── Change request input ──────────────────────────────────────────
             AnimatedVisibility(
                 visible = showChangeInput,
                 enter = expandVertically(),
                 exit = shrinkVertically(),
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = changeText,
                         onValueChange = { changeText = it },
                         placeholder = { Text("What would you like to change?") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        ),
                     )
                     Button(
-                        onClick = {
-                            if (changeText.isNotBlank()) onChangeSomething(changeText.trim())
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
+                        onClick = { if (changeText.isNotBlank()) onChangeSomething(changeText.trim()) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        shape = RoundedCornerShape(14.dp),
                         enabled = changeText.isNotBlank(),
                     ) {
-                        Text("Send", fontWeight = FontWeight.SemiBold)
+                        Text("Send", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            showChangeInput = false
+                            changeText = ""
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                        Text("Cancel")
                     }
                 }
             }
 
-            // ── Footer action buttons ────────────────────────────────────────
+            // ── Footer action buttons (stacked vertically) ────────────────────
             if (!showChangeInput) {
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    OutlinedButton(
-                        onClick = { showChangeInput = true },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
-                    ) {
-                        Text("Change something")
-                    }
                     Button(
                         onClick = onBuildIt,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        shape = RoundedCornerShape(14.dp),
                     ) {
-                        Text("Build it", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Build it",
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { showChangeInput = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                        ),
+                    ) {
+                        Text("Change something", style = MaterialTheme.typography.labelLarge)
                     }
                 }
             }
@@ -214,9 +238,9 @@ private fun ScopeBadge(scope: String) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(color.copy(alpha = 0.15f))
-            .border(1.dp, color.copy(alpha = 0.4f), RoundedCornerShape(50))
-            .padding(horizontal = 10.dp, vertical = 3.dp),
+            .background(color.copy(alpha = 0.12f))
+            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(50))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Text(
             text = label,
@@ -239,11 +263,11 @@ private fun PlatformChip(platform: String) {
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
         modifier = Modifier
             .clip(RoundedCornerShape(50))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 12.dp, vertical = 5.dp),
     ) {
         Icon(
             imageVector = icon,

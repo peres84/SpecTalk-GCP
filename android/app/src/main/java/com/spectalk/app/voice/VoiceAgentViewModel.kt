@@ -349,6 +349,31 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
 
+            is VoiceClientEvent.SessionTimeout -> {
+                // Expected Gemini Live ~10-min hard limit — not a crash.
+                // Stop audio, tear down the session cleanly, resume wake word.
+                connectTimeoutJob?.cancel()
+                cancelTimers()
+                audioPlayer?.clear()
+                audioPlayer?.stop()
+                audioPlayer = null
+                stopMicrophone(sendEndOfSpeech = false)
+                backendClient?.close()
+                backendClient = null
+                clientEventsJob?.cancel()
+                clientEventsJob = null
+                HotwordEventBus.resume()
+                _uiState.update {
+                    it.copy(
+                        isConnecting = false,
+                        isConnected = false,
+                        isMicStreaming = false,
+                        // Show as informational status — not an error color/screen.
+                        statusMessage = event.message,
+                    )
+                }
+            }
+
             VoiceClientEvent.Connecting -> {
                 _uiState.update { it.copy(statusMessage = "Connecting...") }
             }

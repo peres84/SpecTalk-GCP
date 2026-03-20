@@ -32,6 +32,12 @@ sealed interface VoiceClientEvent {
     data object LocationRequest : VoiceClientEvent
     data class Error(val message: String) : VoiceClientEvent
     data class Disconnected(val reason: String) : VoiceClientEvent
+    /**
+     * Gemini Live's ~10-minute session hard limit was reached.
+     * This is expected behaviour — not an error. The backend closes the WebSocket
+     * immediately after sending this message.
+     */
+    data class SessionTimeout(val message: String) : VoiceClientEvent
 }
 
 /**
@@ -187,6 +193,10 @@ class BackendVoiceClient(
                 _events.tryEmit(VoiceClientEvent.JobUpdate(jobId, status, msg))
             }
             "request_location" -> _events.tryEmit(VoiceClientEvent.LocationRequest)
+            "session_timeout" -> {
+                val msg = json.optString("message", "Session ended after 10 minutes. Say 'Hey Gervis' to continue.")
+                _events.tryEmit(VoiceClientEvent.SessionTimeout(msg))
+            }
             "error" -> {
                 val msg = json.optString("message", "Unknown backend error.")
                 _events.tryEmit(VoiceClientEvent.Error(msg))

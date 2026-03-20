@@ -3,6 +3,7 @@ package com.spectalk.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -62,88 +64,102 @@ fun RegisterScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 32.dp),
-        verticalArrangement = Arrangement.Center,
+            .imePadding()
+            .padding(horizontal = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(modifier = Modifier.height(64.dp))
+        Spacer(modifier = Modifier.height(72.dp))
 
+        // ── Heading ──────────────────────────────────────────────────────────
         Text(
             text = "Create account",
-            style = MaterialTheme.typography.headlineMedium,
+            style = MaterialTheme.typography.headlineLarge,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = "Join SpecTalk",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
         )
 
         Spacer(modifier = Modifier.height(40.dp))
 
-        OutlinedTextField(
+        // ── Fields ───────────────────────────────────────────────────────────
+        AppleTextField(
             value = email,
             onValueChange = { email = it },
-            label = { Text("Email") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+            placeholder = "Email",
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Email,
+                imeAction = ImeAction.Next,
+            ),
             keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        OutlinedTextField(
+        AppleTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("Password") },
-            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+            placeholder = "Password",
+            visualTransformation = if (passwordVisible) VisualTransformation.None
+            else PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Password,
+                imeAction = ImeAction.Next,
+            ),
             keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
             trailingIcon = {
                 IconButton(onClick = { passwordVisible = !passwordVisible }) {
                     Icon(
                         imageVector = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                         contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     )
                 }
             },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        OutlinedTextField(
+        AppleTextField(
             value = confirmPassword,
             onValueChange = { confirmPassword = it },
-            label = { Text("Confirm password") },
+            placeholder = "Confirm password",
             visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Password,
+                imeAction = ImeAction.Done,
+            ),
             keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus(); attemptRegister() }),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
         )
 
+        // ── Error messages ───────────────────────────────────────────────────
         val errorMessage = localError ?: (authState as? AuthUiState.Error)?.message
         if (errorMessage != null) {
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = errorMessage,
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
             )
+        } else {
+            Spacer(modifier = Modifier.height(10.dp))
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
+        // ── Create Account button ────────────────────────────────────────────
         Button(
             onClick = { attemptRegister() },
             enabled = authState !is AuthUiState.Loading
                     && email.isNotBlank() && password.isNotBlank() && confirmPassword.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(16.dp),
         ) {
             if (authState is AuthUiState.Loading) {
                 CircularProgressIndicator(
@@ -152,30 +168,39 @@ fun RegisterScreen(
                     strokeWidth = 2.dp,
                 )
             } else {
-                Text("Create Account")
+                Text("Create Account", style = MaterialTheme.typography.labelLarge)
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
-        // Divider
+        // ── Divider ──────────────────────────────────────────────────────────
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+            HorizontalDivider(
+                modifier = Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
             Text(
                 text = "  or  ",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.35f),
             )
-            HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+            HorizontalDivider(
+                modifier = Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
         }
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Google sign-up button
+        // ── Google button ────────────────────────────────────────────────────
         OutlinedButton(
             onClick = { authViewModel.signInWithGoogle(context) },
             enabled = authState !is AuthUiState.Loading,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(16.dp),
             border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(width = 1.dp),
         ) {
             Icon(
@@ -188,22 +213,29 @@ fun RegisterScreen(
             Text(
                 text = "Continue with Google",
                 color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.labelLarge,
             )
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(32.dp))
 
+        // ── Sign in link ─────────────────────────────────────────────────────
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "Already have an account?",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
             )
             TextButton(onClick = { authViewModel.resetState(); onNavigateToLogin() }) {
-                Text("Sign in")
+                Text(
+                    "Sign in",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(40.dp))
     }
 }

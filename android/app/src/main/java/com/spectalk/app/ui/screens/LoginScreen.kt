@@ -3,6 +3,7 @@ package com.spectalk.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -52,22 +54,21 @@ fun LoginScreen(
     if (showResetDialog) {
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
-            title = { Text("Reset Password") },
+            shape = RoundedCornerShape(20.dp),
+            title = { Text("Reset Password", fontWeight = FontWeight.SemiBold) },
             text = {
-                OutlinedTextField(
+                AppleTextField(
                     value = resetEmail,
                     onValueChange = { resetEmail = it },
-                    label = { Text("Email") },
+                    placeholder = "Email address",
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     authViewModel.sendPasswordReset(resetEmail)
                     showResetDialog = false
-                }) { Text("Send") }
+                }) { Text("Send", fontWeight = FontWeight.SemiBold) }
             },
             dismissButton = {
                 TextButton(onClick = { showResetDialog = false }) { Text("Cancel") }
@@ -80,45 +81,45 @@ fun LoginScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 32.dp),
-        verticalArrangement = Arrangement.Center,
+            .imePadding()
+            .padding(horizontal = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(modifier = Modifier.height(64.dp))
+        Spacer(modifier = Modifier.height(72.dp))
 
+        // ── Heading ──────────────────────────────────────────────────────────
         Text(
             text = "Welcome back",
-            style = MaterialTheme.typography.headlineMedium,
+            style = MaterialTheme.typography.headlineLarge,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "Sign in to SpecTalk",
+            text = "Sign in to continue",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
         )
 
         Spacer(modifier = Modifier.height(40.dp))
 
-        OutlinedTextField(
+        // ── Fields ───────────────────────────────────────────────────────────
+        AppleTextField(
             value = email,
             onValueChange = { email = it },
-            label = { Text("Email") },
+            placeholder = "Email",
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Email,
                 imeAction = ImeAction.Next,
             ),
             keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        OutlinedTextField(
+        AppleTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("Password") },
+            placeholder = "Password",
             visualTransformation = if (passwordVisible) VisualTransformation.None
             else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(
@@ -134,40 +135,54 @@ fun LoginScreen(
                     Icon(
                         imageVector = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
                         contentDescription = if (passwordVisible) "Hide" else "Show",
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     )
                 }
             },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
         )
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = { showResetDialog = true }) { Text("Forgot password?") }
+            TextButton(onClick = { showResetDialog = true }) {
+                Text(
+                    "Forgot password?",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
 
-        // Error / success messages
+        // ── Error / success messages ─────────────────────────────────────────
         when (val s = authState) {
-            is AuthUiState.Error -> Text(
-                text = s.message,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center,
-            )
-            is AuthUiState.PasswordResetSent -> Text(
-                text = "Password reset email sent.",
-                color = MaterialTheme.colorScheme.secondary,
-                style = MaterialTheme.typography.bodySmall,
-            )
-            else -> Unit
+            is AuthUiState.Error -> {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = s.message,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+            is AuthUiState.PasswordResetSent -> {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Password reset email sent.",
+                    color = MaterialTheme.colorScheme.secondary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+            else -> Spacer(modifier = Modifier.height(8.dp))
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Primary sign-in button
+        // ── Sign In button ───────────────────────────────────────────────────
         Button(
             onClick = { authViewModel.signIn(email, password) },
             enabled = authState !is AuthUiState.Loading && email.isNotBlank() && password.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(16.dp),
         ) {
             if (authState is AuthUiState.Loading) {
                 CircularProgressIndicator(
@@ -176,33 +191,43 @@ fun LoginScreen(
                     strokeWidth = 2.dp,
                 )
             } else {
-                Text("Sign In")
+                Text(
+                    "Sign In",
+                    style = MaterialTheme.typography.labelLarge,
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
-        // Divider
+        // ── Divider ──────────────────────────────────────────────────────────
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+            HorizontalDivider(
+                modifier = Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
             Text(
                 text = "  or  ",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.35f),
             )
-            HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+            HorizontalDivider(
+                modifier = Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
         }
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Google sign-in button
+        // ── Google button ────────────────────────────────────────────────────
         OutlinedButton(
             onClick = { authViewModel.signInWithGoogle(context) },
             enabled = authState !is AuthUiState.Loading,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
-                width = 1.dp,
-            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(width = 1.dp),
         ) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_google),
@@ -214,23 +239,75 @@ fun LoginScreen(
             Text(
                 text = "Continue with Google",
                 color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.labelLarge,
             )
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(32.dp))
 
+        // ── Create account link ──────────────────────────────────────────────
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "Don't have an account?",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
             )
             TextButton(onClick = {
                 authViewModel.resetState()
                 onNavigateToRegister()
-            }) { Text("Create account") }
+            }) {
+                Text(
+                    "Create account",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(40.dp))
     }
+}
+
+// ── Shared Apple-style filled text field ──────────────────────────────────────
+
+@Composable
+internal fun AppleTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    trailingIcon: @Composable (() -> Unit)? = null,
+) {
+    TextField(
+        value = value,
+        onValueChange = onValueChange,
+        placeholder = {
+            Text(
+                placeholder,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+            )
+        },
+        colors = TextFieldDefaults.colors(
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+            unfocusedIndicatorColor = Color.Transparent,
+            focusedIndicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+            errorIndicatorColor = Color.Transparent,
+        ),
+        shape = RoundedCornerShape(14.dp),
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
+        visualTransformation = visualTransformation,
+        trailingIcon = trailingIcon,
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyLarge,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(56.dp),
+    )
 }

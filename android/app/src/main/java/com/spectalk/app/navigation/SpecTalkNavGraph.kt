@@ -113,7 +113,13 @@ fun SpecTalkNavGraph() {
 
         composable(Screen.Settings.route) {
             SettingsScreen(
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onSignOut = {
+                    authViewModel.signOut()
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(Screen.Home.route) { inclusive = true }
+                    }
+                },
             )
         }
 

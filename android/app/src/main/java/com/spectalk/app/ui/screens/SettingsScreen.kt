@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,18 +31,22 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -71,6 +76,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
+    onSignOut: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -80,7 +86,6 @@ fun SettingsScreen(
     val integrationsRepository = remember { IntegrationsRepository() }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // --- Integrations state ---
     var integrations by remember { mutableStateOf<List<IntegrationItem>>(emptyList()) }
     var integrationsLoading by remember { mutableStateOf(false) }
     var showConnectForm by remember { mutableStateOf(false) }
@@ -94,9 +99,7 @@ fun SettingsScreen(
         integrationsLoading = false
     }
 
-    LaunchedEffect(Unit) {
-        reloadIntegrations()
-    }
+    LaunchedEffect(Unit) { reloadIntegrations() }
 
     var wakeWord by remember { mutableStateOf(AppPreferences.getWakeWord(context)) }
     var locationSharingEnabled by remember {
@@ -111,16 +114,11 @@ fun SettingsScreen(
     val hasLocationPermission = rememberLocationPermission(context)
 
     fun refreshLocation() {
-        if (!hasLocationPermission || !locationSharingEnabled) {
-            locationSummary = null
-            return
-        }
+        if (!hasLocationPermission || !locationSharingEnabled) { locationSummary = null; return }
         scope.launch {
             locationBusy = true
             locationSummary = runCatching { locationRepository.getLocationContext() }
-                .getOrNull()
-                ?.locationLabel
-                ?: "Location available but no label yet"
+                .getOrNull()?.locationLabel ?: "Location available but no label yet"
             locationBusy = false
         }
     }
@@ -141,22 +139,23 @@ fun SettingsScreen(
     }
 
     LaunchedEffect(hasLocationPermission, locationSharingEnabled) {
-        if (hasLocationPermission && locationSharingEnabled) {
-            refreshLocation()
-        } else {
-            locationSummary = null
-        }
+        if (hasLocationPermission && locationSharingEnabled) refreshLocation()
+        else locationSummary = null
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text("Settings", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -166,308 +165,299 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
-            Text(
-                text = "Voice",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
 
-            OutlinedTextField(
-                value = wakeWord,
-                onValueChange = { wakeWord = it },
-                label = { Text("Wake word") },
-                supportingText = {
-                    Text("Default: ${AppPreferences.DEFAULT_WAKE_WORD} — applies immediately")
-                },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Button(
-                onClick = {
-                    val word = wakeWord.trim().ifBlank { AppPreferences.DEFAULT_WAKE_WORD }
-                    wakeWord = word
-                    AppPreferences.setWakeWord(context, word)
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Save")
+            // ── Voice ─────────────────────────────────────────────────────────
+            SettingsGroup(title = "Voice") {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = wakeWord,
+                        onValueChange = { wakeWord = it },
+                        label = { Text("Wake word") },
+                        supportingText = { Text("Default: ${AppPreferences.DEFAULT_WAKE_WORD}") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = {
+                            val word = wakeWord.trim().ifBlank { AppPreferences.DEFAULT_WAKE_WORD }
+                            wakeWord = word
+                            AppPreferences.setWakeWord(context, word)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Text("Save", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            // ── Devices ───────────────────────────────────────────────────────
+            SettingsGroup(title = "Devices") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (deviceState.isWakeWordReady) MaterialTheme.colorScheme.secondary
+                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                            ),
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            text = deviceState.primaryDeviceLabel ?: "No device connected",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = if (deviceState.isWakeWordReady)
+                                "Connected — wake word active"
+                            else
+                                "Connect Meta glasses or a Bluetooth audio device",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        )
+                    }
+                }
+            }
 
-            Text(
-                text = "Devices",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-
-            ConnectedDevicesSection(deviceState = deviceState)
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Location",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-
-            LocationSettingsSection(
-                context = context,
-                hasLocationPermission = hasLocationPermission,
-                sharingEnabled = locationSharingEnabled,
-                locationSummary = locationSummary,
-                loading = locationBusy,
-                onSharingChanged = { enabled ->
-                    if (enabled) {
-                        if (hasLocationPermission) {
-                            locationSharingEnabled = true
-                            AppPreferences.setLocationSharingEnabled(context, true)
-                            refreshLocation()
-                        } else {
-                            locationPermissionLauncher.launch(
-                                arrayOf(
-                                    Manifest.permission.ACCESS_FINE_LOCATION,
-                                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                                )
+            // ── Location ──────────────────────────────────────────────────────
+            SettingsGroup(title = "Location") {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Text(
+                                "Share location with Gervis",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                text = if (hasLocationPermission)
+                                    "Used for \"near me\" and Google Maps requests."
+                                else
+                                    "Grant permission for location-aware responses.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                             )
                         }
-                    } else {
-                        locationSharingEnabled = false
-                        locationSummary = null
-                        AppPreferences.setLocationSharingEnabled(context, false)
-                    }
-                },
-                onRefreshLocation = ::refreshLocation,
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Notifications",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-
-            SettingsToggleRow(
-                title = "Auto-open on job complete",
-                subtitle = "When a background job finishes, automatically open the conversation " +
-                    "and have Gervis speak the result — no tap needed.",
-                checked = autoOpenOnNotification,
-                onCheckedChange = { enabled ->
-                    autoOpenOnNotification = enabled
-                    AppPreferences.setAutoOpenOnNotification(context, enabled)
-                },
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "Integrations",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                if (integrationsLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
-                }
-            }
-
-            val openClaw = integrations.find { it.service == "openclaw" }
-
-            IntegrationRow(
-                item = openClaw,
-                showConnectForm = showConnectForm,
-                connectUrl = connectUrl,
-                connectToken = connectToken,
-                connectBusy = connectBusy,
-                onConnectUrl = { connectUrl = it },
-                onConnectToken = { connectToken = it },
-                onShowForm = { showConnectForm = true },
-                onDismissForm = {
-                    showConnectForm = false
-                    connectUrl = ""
-                    connectToken = ""
-                },
-                onSave = {
-                    scope.launch {
-                        connectBusy = true
-                        val result = integrationsRepository.saveIntegration(
-                            jwt = tokenRepository.getProductJwt(),
-                            service = "openclaw",
-                            url = connectUrl.trim(),
-                            token = connectToken.trim(),
+                        Switch(
+                            checked = locationSharingEnabled && hasLocationPermission,
+                            onCheckedChange = { enabled ->
+                                if (enabled) {
+                                    if (hasLocationPermission) {
+                                        locationSharingEnabled = true
+                                        AppPreferences.setLocationSharingEnabled(context, true)
+                                        refreshLocation()
+                                    } else {
+                                        locationPermissionLauncher.launch(
+                                            arrayOf(
+                                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                                Manifest.permission.ACCESS_COARSE_LOCATION,
+                                            )
+                                        )
+                                    }
+                                } else {
+                                    locationSharingEnabled = false
+                                    locationSummary = null
+                                    AppPreferences.setLocationSharingEnabled(context, false)
+                                }
+                            },
                         )
-                        connectBusy = false
-                        when (result) {
-                            is SaveResult.Success -> {
-                                showConnectForm = false
-                                connectUrl = ""
-                                connectToken = ""
-                                reloadIntegrations()
-                                snackbarHostState.showSnackbar(result.message)
-                            }
-                            is SaveResult.Error -> {
-                                snackbarHostState.showSnackbar(result.message)
+                    }
+
+                    when {
+                        locationBusy -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Text("Refreshing…", style = MaterialTheme.typography.bodySmall)
                             }
                         }
+                        locationSharingEnabled && hasLocationPermission && !locationSummary.isNullOrBlank() -> {
+                            Text(
+                                "Current location: $locationSummary",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                            )
+                        }
+                    }
+
+                    if (hasLocationPermission) {
+                        OutlinedButton(
+                            onClick = ::refreshLocation,
+                            shape = RoundedCornerShape(10.dp),
+                        ) { Text("Refresh location") }
+                    } else {
+                        OutlinedButton(
+                            onClick = {
+                                context.startActivity(
+                                    Intent(
+                                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        Uri.fromParts("package", context.packageName, null),
+                                    )
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                        ) { Text("Open app settings") }
+                    }
+                }
+            }
+
+            // ── Notifications ─────────────────────────────────────────────────
+            SettingsGroup(title = "Notifications") {
+                SettingsToggleRow(
+                    title = "Auto-open on job complete",
+                    subtitle = "Opens the conversation and has Gervis speak the result automatically.",
+                    checked = autoOpenOnNotification,
+                    onCheckedChange = { enabled ->
+                        autoOpenOnNotification = enabled
+                        AppPreferences.setAutoOpenOnNotification(context, enabled)
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                )
+            }
+
+            // ── Integrations ──────────────────────────────────────────────────
+            SettingsGroup(
+                title = "Integrations",
+                trailingContent = {
+                    if (integrationsLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
                     }
                 },
-                onDisconnect = {
-                    scope.launch {
-                        integrationsRepository.deleteIntegration(
-                            jwt = tokenRepository.getProductJwt(),
-                            service = "openclaw",
-                        )
-                        reloadIntegrations()
-                    }
-                },
-            )
-        }
-    }
-}
+            ) {
+                val openClaw = integrations.find { it.service == "openclaw" }
+                IntegrationRow(
+                    item = openClaw,
+                    showConnectForm = showConnectForm,
+                    connectUrl = connectUrl,
+                    connectToken = connectToken,
+                    connectBusy = connectBusy,
+                    onConnectUrl = { connectUrl = it },
+                    onConnectToken = { connectToken = it },
+                    onShowForm = { showConnectForm = true },
+                    onDismissForm = {
+                        showConnectForm = false
+                        connectUrl = ""
+                        connectToken = ""
+                    },
+                    onSave = {
+                        scope.launch {
+                            connectBusy = true
+                            val result = integrationsRepository.saveIntegration(
+                                jwt = tokenRepository.getProductJwt(),
+                                service = "openclaw",
+                                url = connectUrl.trim(),
+                                token = connectToken.trim(),
+                            )
+                            connectBusy = false
+                            when (result) {
+                                is SaveResult.Success -> {
+                                    showConnectForm = false
+                                    connectUrl = ""
+                                    connectToken = ""
+                                    reloadIntegrations()
+                                    snackbarHostState.showSnackbar(result.message)
+                                }
+                                is SaveResult.Error -> snackbarHostState.showSnackbar(result.message)
+                            }
+                        }
+                    },
+                    onDisconnect = {
+                        scope.launch {
+                            integrationsRepository.deleteIntegration(
+                                jwt = tokenRepository.getProductJwt(),
+                                service = "openclaw",
+                            )
+                            reloadIntegrations()
+                        }
+                    },
+                )
+            }
 
-@Composable
-private fun ConnectedDevicesSection(
-    deviceState: com.spectalk.app.device.ConnectedDeviceState,
-) {
-    val dotColor = if (deviceState.isWakeWordReady) {
-        MaterialTheme.colorScheme.secondary
-    } else {
-        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-    }
-
-    val title = deviceState.primaryDeviceLabel ?: "No device connected"
-    val subtitle = if (deviceState.isWakeWordReady) {
-        "Connected — wake word active only while this device state is available"
-    } else {
-        "Connect Meta glasses or a Bluetooth audio device to enable wake word"
-    }
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(10.dp)
-                .clip(CircleShape)
-                .background(dotColor),
-        )
-
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-            )
-        }
-    }
-}
-
-@Composable
-private fun LocationSettingsSection(
-    context: Context,
-    hasLocationPermission: Boolean,
-    sharingEnabled: Boolean,
-    locationSummary: String?,
-    loading: Boolean,
-    onSharingChanged: (Boolean) -> Unit,
-    onRefreshLocation: () -> Unit,
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+            // ── Sign Out ──────────────────────────────────────────────────────
+            Spacer(Modifier.height(8.dp))
+            TextButton(
+                onClick = onSignOut,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
             ) {
                 Text(
-                    text = "Share location with Gervis",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = if (hasLocationPermission) {
-                        "Used for “near me” and Google Maps grounded requests."
-                    } else {
-                        "Grant permission to let the backend resolve “near me” requests."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    "Sign Out",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
 
-            Switch(
-                checked = sharingEnabled && hasLocationPermission,
-                onCheckedChange = onSharingChanged,
-            )
-        }
-
-        when {
-            loading -> {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Text(
-                        text = "Refreshing location...",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-
-            sharingEnabled && hasLocationPermission && !locationSummary.isNullOrBlank() -> {
-                Text(
-                    text = "Current location: $locationSummary",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                )
-            }
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (hasLocationPermission) {
-                OutlinedButton(onClick = onRefreshLocation) {
-                    Text("Refresh location")
-                }
-            } else {
-                OutlinedButton(onClick = {
-                    context.startActivity(
-                        Intent(
-                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                            Uri.fromParts("package", context.packageName, null),
-                        )
-                    )
-                }) {
-                    Text("Open app settings")
-                }
-            }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
+
+// ── iOS-style grouped section ─────────────────────────────────────────────────
+
+@Composable
+private fun SettingsGroup(
+    title: String,
+    modifier: Modifier = Modifier,
+    trailingContent: @Composable (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(modifier = modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
+        ) {
+            Text(
+                text = title.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f),
+                fontWeight = FontWeight.Medium,
+            )
+            trailingContent?.invoke()
+        }
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 1.dp,
+        ) {
+            Column(content = content)
+        }
+    }
+}
+
+// ── Toggle row ────────────────────────────────────────────────────────────────
 
 @Composable
 private fun SettingsToggleRow(
@@ -475,15 +465,18 @@ private fun SettingsToggleRow(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
                 text = title,
@@ -493,15 +486,14 @@ private fun SettingsToggleRow(
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             )
         }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-        )
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
+
+// ── Integration row ───────────────────────────────────────────────────────────
 
 @Composable
 private fun IntegrationRow(
@@ -518,8 +510,10 @@ private fun IntegrationRow(
     onDisconnect: () -> Unit,
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -528,7 +522,7 @@ private fun IntegrationRow(
         ) {
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
                     text = "OpenClaw",
@@ -536,14 +530,13 @@ private fun IntegrationRow(
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = "OpenClaw — AI coding agent",
+                    text = "AI coding agent",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
                 if (item != null && item.connected) {
-                    Spacer(modifier = Modifier.height(2.dp))
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(8.dp),
                         color = MaterialTheme.colorScheme.secondaryContainer,
                     ) {
                         Text(
@@ -554,15 +547,14 @@ private fun IntegrationRow(
                         )
                     }
                 } else {
-                    Spacer(modifier = Modifier.height(2.dp))
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(8.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,
                     ) {
                         Text(
                             text = "Not connected",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         )
                     }
@@ -572,40 +564,40 @@ private fun IntegrationRow(
             if (item != null && item.connected) {
                 OutlinedButton(
                     onClick = onDisconnect,
+                    shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = MaterialTheme.colorScheme.error,
                     ),
-                ) {
-                    Text("Disconnect")
-                }
+                ) { Text("Disconnect") }
             } else if (!showConnectForm) {
-                Button(onClick = onShowForm) {
-                    Text("Connect")
-                }
+                Button(
+                    onClick = onShowForm,
+                    shape = RoundedCornerShape(10.dp),
+                ) { Text("Connect") }
             }
         }
 
         AnimatedVisibility(visible = showConnectForm) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                )
                 Text(
                     text = "Connect OpenClaw",
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                 )
-
                 OutlinedTextField(
                     value = connectUrl,
                     onValueChange = onConnectUrl,
                     label = { Text("Base URL") },
                     placeholder = { Text("https://your-machine.tail-xxxx.ts.net") },
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
-
                 OutlinedTextField(
                     value = connectToken,
                     onValueChange = onConnectToken,
@@ -613,15 +605,14 @@ private fun IntegrationRow(
                     placeholder = { Text("your-hook-token") },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = onSave,
                         enabled = connectUrl.isNotBlank() && connectToken.isNotBlank() && !connectBusy,
+                        shape = RoundedCornerShape(10.dp),
                     ) {
                         if (connectBusy) {
                             CircularProgressIndicator(
@@ -633,9 +624,11 @@ private fun IntegrationRow(
                             Text("Save")
                         }
                     }
-                    OutlinedButton(onClick = onDismissForm, enabled = !connectBusy) {
-                        Text("Cancel")
-                    }
+                    OutlinedButton(
+                        onClick = onDismissForm,
+                        enabled = !connectBusy,
+                        shape = RoundedCornerShape(10.dp),
+                    ) { Text("Cancel") }
                 }
             }
         }
@@ -645,12 +638,10 @@ private fun IntegrationRow(
 @Composable
 private fun rememberLocationPermission(context: Context): Boolean {
     val fine = ContextCompat.checkSelfPermission(
-        context,
-        Manifest.permission.ACCESS_FINE_LOCATION,
+        context, Manifest.permission.ACCESS_FINE_LOCATION,
     ) == PackageManager.PERMISSION_GRANTED
     val coarse = ContextCompat.checkSelfPermission(
-        context,
-        Manifest.permission.ACCESS_COARSE_LOCATION,
+        context, Manifest.permission.ACCESS_COARSE_LOCATION,
     ) == PackageManager.PERMISSION_GRANTED
     return fine || coarse
 }
