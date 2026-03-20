@@ -9,6 +9,7 @@ sealed interface Screen {
     data object Home : Screen { override val route = "home" }
     data object Settings : Screen { override val route = "settings" }
     data object Gallery : Screen { override val route = "gallery" }
+    data object Tutorial : Screen { override val route = "tutorial" }
     data object VoiceSession : Screen {
         override val route = "voice_session?conversationId={conversationId}"
         fun routeWith(conversationId: String?) = buildString {

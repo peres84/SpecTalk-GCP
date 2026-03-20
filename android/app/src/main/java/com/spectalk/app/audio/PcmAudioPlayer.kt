@@ -1,8 +1,12 @@
 package com.spectalk.app.audio
 
+import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
+import android.os.Build
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -11,7 +15,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlin.math.max
 
-class PcmAudioPlayer {
+class PcmAudioPlayer(context: Context) {
     companion object {
         private const val SAMPLE_RATE_HZ = 24_000
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
@@ -19,16 +23,22 @@ class PcmAudioPlayer {
     }
 
     private val audioQueue = Channel<ByteArray>(Channel.UNLIMITED)
+    private val appContext = context.applicationContext
+    private val audioManager = appContext.getSystemService(AudioManager::class.java)
     private var audioTrack: AudioTrack? = null
     private var playbackJob: Job? = null
+    private var previousMode: Int? = null
+    private var previousSpeakerphoneOn: Boolean? = null
 
     // Counts enqueued-but-not-yet-written chunks.
     // VoiceAgentViewModel uses this to pause inactivity timer while Gervis is speaking.
     private val pendingChunks = AtomicInteger(0)
     val hasPendingAudio: Boolean get() = pendingChunks.get() > 0
 
-    fun start(scope: CoroutineScope) {
+    fun start(scope: CoroutineScope, preferSpeaker: Boolean) {
         if (playbackJob != null) return
+
+        configureRoute(preferSpeaker)
 
         val minBufferSize = AudioTrack.getMinBufferSize(SAMPLE_RATE_HZ, CHANNEL_MASK, AUDIO_FORMAT)
         val track = AudioTrack.Builder()
@@ -58,6 +68,11 @@ class PcmAudioPlayer {
                 pendingChunks.decrementAndGet()
             }
         }
+    }
+
+    fun setPreferSpeaker(preferSpeaker: Boolean) {
+        if (playbackJob == null) return
+        configureRoute(preferSpeaker)
     }
 
     fun enqueue(audioBytes: ByteArray) {
@@ -91,5 +106,44 @@ class PcmAudioPlayer {
             track.release()
         }
         audioTrack = null
+        restoreRoute()
+    }
+
+    private fun configureRoute(preferSpeaker: Boolean) {
+        val manager = audioManager ?: return
+        if (previousMode == null) previousMode = manager.mode
+        if (previousSpeakerphoneOn == null) previousSpeakerphoneOn = manager.isSpeakerphoneOn
+
+        manager.mode = AudioManager.MODE_IN_COMMUNICATION
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (preferSpeaker) {
+                val speaker = manager.availableCommunicationDevices.firstOrNull { device ->
+                    device.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                }
+                if (speaker != null) {
+                    manager.setCommunicationDevice(speaker)
+                } else {
+                    manager.clearCommunicationDevice()
+                }
+            } else {
+                manager.clearCommunicationDevice()
+            }
+        }
+
+        manager.isSpeakerphoneOn = preferSpeaker
+    }
+
+    private fun restoreRoute() {
+        val manager = audioManager ?: return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            manager.clearCommunicationDevice()
+        }
+
+        previousSpeakerphoneOn?.let { manager.isSpeakerphoneOn = it }
+        previousMode?.let { manager.mode = it }
+        previousSpeakerphoneOn = null
+        previousMode = null
     }
 }

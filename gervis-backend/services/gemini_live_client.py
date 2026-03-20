@@ -6,6 +6,7 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.genai import types
 
 from config import settings
+from services.speech_preferences import build_speech_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ def _resolve_audio_modality(RunConfig):
     return "AUDIO"
 
 
-def _build_run_config():
+def _build_run_config(speech_preferences: dict | None = None):
     """Build the RunConfig for a native-audio Gemini Live session.
 
     Only uses fields available in google-adk 1.1.1:
@@ -65,6 +66,11 @@ def _build_run_config():
         output_audio_transcription=types.AudioTranscriptionConfig(),
     )
 
+    normalized_speech = build_speech_preferences(
+        (speech_preferences or {}).get("voice_language"),
+        voice_name=(speech_preferences or {}).get("voice_name") or settings.gemini_voice_name,
+    )
+
     # Explicitly set AUDIO response modality — required by the native-audio
     # model. Without this the Gemini Live API rejects the connection with
     # "Cannot extract voices from a non-audio request" (error 1007).
@@ -75,6 +81,21 @@ def _build_run_config():
     if "response_modalities" in supported:
         modality_audio = _resolve_audio_modality(RunConfig)
         kwargs["response_modalities"] = [modality_audio]
+
+    if "speech_config" in supported:
+        try:
+            speech_kwargs = dict(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=normalized_speech["voice_name"],
+                    )
+                )
+            )
+            if normalized_speech.get("live_language_code"):
+                speech_kwargs["language_code"] = normalized_speech["live_language_code"]
+            kwargs["speech_config"] = types.SpeechConfig(**speech_kwargs)
+        except AttributeError:
+            logger.debug("SpeechConfig fields not available in this SDK version — skipping voice config")
 
     if "session_resumption" in supported:
         kwargs["session_resumption"] = types.SessionResumptionConfig(transparent=True)
@@ -143,10 +164,14 @@ class GeminiLiveClient:
         return session
 
     def start_live_session(
-        self, user_id: str, session_id: str, live_request_queue: LiveRequestQueue
+        self,
+        user_id: str,
+        session_id: str,
+        live_request_queue: LiveRequestQueue,
+        speech_preferences: dict | None = None,
     ):
         """Start a Gemini Live streaming session. Returns async generator of events."""
-        run_config = _build_run_config()
+        run_config = _build_run_config(speech_preferences)
         return self.runner.run_live(
             user_id=user_id,
             session_id=session_id,

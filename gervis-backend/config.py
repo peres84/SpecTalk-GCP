@@ -67,9 +67,11 @@ class Settings(BaseSettings):
     # Phase 3: Gemini Live + ADK
     # Get from https://aistudio.google.com/app/apikey
     # Used for: Gemini Live voice session, Google Search grounding, Google Maps grounding
+    # docs https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/2-5-flash-live-api
     gemini_api_key: str = ""
     adk_app_name: str = "spectalk"
-    gemini_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    gemini_model: str = "gemini-live-2.5-flash-native-audio"
+    gemini_voice_name: str = "Algieba"
 
     # Phase 4: Background jobs, Cloud Tasks, and FCM notifications
     # GCP project ID — required for Cloud Tasks in production

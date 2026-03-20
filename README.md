@@ -50,17 +50,33 @@ No screen required at any step. The entire workflow runs through voice and your 
 
 ---
 
-## Meta Glasses Image Workflow
+## Camera And Image Workflow
 
-When a voice session is already open and Meta glasses are connected, the top-right camera icon
-in the voice session captures a single still frame from the glasses and sends it to Gervis.
-After that, ask something like "What do you see?" or "Describe this."
+When a voice session is already open, the camera controls can send an image to Gervis
+immediately.
+
+Meta glasses flow:
+
+- If Meta glasses are connected and camera-ready, the top-right camera icon captures a single
+  still frame from the glasses
+- That image is sent to Gervis automatically
+- The image is shown inline inside the conversation
+- The same image is saved in Gallery
+
+Phone camera flow:
+
+- If Meta glasses are not available, the same action falls back to the phone camera
+- After taking the photo, the image is sent to Gervis automatically
+- The image is shown inline inside the conversation
+- The same image is saved in Gallery
 
 Current behavior:
 
 - It is a single tap in the app UI, not a press-and-hold gesture
 - It does not currently use the physical glasses button as the trigger
-- If glasses are not available, the same action falls back to the phone camera
+- You can then ask things like "What do you see?" or "Describe this"
+
+For the current end-user guide, see [`docs/app_tutorial.md`](./docs/app_tutorial.md).
 
 ---
 
@@ -332,6 +348,7 @@ Gervis: "Welcome back. Your app is built. The PR is ready for review."
 
 - [`docs/architecture.md`](./docs/architecture.md) — Complete system design, all technical decisions
 - [`docs/architecture-diagram.md`](./docs/architecture-diagram.md) — ASCII system diagrams
+- [`docs/app_tutorial.md`](./docs/app_tutorial.md) — Current interaction guide for voice, text, camera, gallery, and wearables
 - [`TODO.md`](./TODO.md) — Active delivery plan with approval gates
 - [`CLAUDE.md`](./CLAUDE.md) — Instructions for the AI coding assistant
 - [`AGENTS.md`](./AGENTS.md) — Agent architecture + Meta DAT SDK reference

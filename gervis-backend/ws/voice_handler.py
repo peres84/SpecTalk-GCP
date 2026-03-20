@@ -5,6 +5,7 @@ Protocol:
   Phone -> Backend:
     - Binary frames: raw PCM 16kHz 16-bit mono audio
     - JSON text: {"type": "end_of_speech"}
+                 {"type": "text_input", "text": "..."}
                  {"type": "image", "mime_type": "image/jpeg", "data": "<base64>"}
                  {"type": "location_response", "latitude": float, "longitude": float,
                   "accuracy_meters": float (optional), "location_label": str (optional)}
@@ -14,6 +15,8 @@ Protocol:
     - JSON text: {"type": "interrupted"}
                  {"type": "input_transcript", "text": "...", "is_partial": bool}
                  {"type": "output_transcript", "text": "...", "is_partial": bool}
+                 {"type": "tool_status", "activity_id": "...", "label": "...",
+                  "status": "running|completed", "duration_ms": int (optional)}
                  {"type": "turn_complete"}
                  {"type": "request_location"}
                  {"type": "job_started", "job_id": "...", "spoken_ack": "..."}
@@ -22,6 +25,8 @@ Protocol:
                  {"type": "error", "message": "..."}
 
 Auth: JWT passed as query param ?token=<jwt> OR Authorization header.
+      Optional query param ?voice_language=<BCP-47 code> selects the spoken
+      language guard for the Live session.
       WebSocket is closed with code 4001 if token is missing/invalid.
 """
 
@@ -30,6 +35,7 @@ import base64
 import json
 import logging
 import os
+import time
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from google.adk.agents.live_request_queue import LiveRequestQueue
@@ -56,6 +62,7 @@ from services.resume_event_service import (
     acknowledge_all_resume_events,
 )
 from services.session_logger import log_adk_event, log_session_start, log_session_end
+from services.speech_preferences import build_speech_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +73,12 @@ router = APIRouter()
 # audio chunk instead of one span per complete utterance.
 # Structure: { conversation_id: { "user": ["frag1", "frag2", ...], "model": [...] } }
 _turn_buffer: dict[str, dict[str, list[str]]] = {}
+
+# User text messages injected directly from the chat composer are persisted eagerly on
+# receipt. If the Live session echoes the same user text back, suppress forwarding and
+# buffering once so the Android transcript and stored history do not duplicate it.
+_pending_text_inputs: dict[str, list[str]] = {}
+_tool_activity_timings: dict[str, dict[str, float]] = {}
 
 
 def _extract_jwt(websocket: WebSocket, token: str | None) -> dict | None:
@@ -115,6 +128,29 @@ async def _upstream_task(
                 if msg_type == "end_of_speech":
                     logger.debug(f"[{conversation_id}] end_of_speech received (VAD handles)")
 
+                elif msg_type == "text_input":
+                    text = (msg.get("text") or "").strip()
+                    if text:
+                        try:
+                            live_request_queue.send_content(
+                                types.Content(
+                                    role="user",
+                                    parts=[types.Part(text=text)],
+                                )
+                            )
+                        except AttributeError:
+                            logger.warning(
+                                f"[{conversation_id}] send_content unavailable — text_input ignored"
+                            )
+                            continue
+                        _pending_text_inputs.setdefault(conversation_id, []).append(text)
+                        asyncio.create_task(
+                            persist_turn(conversation_id, "user", text, "text_input")
+                        )
+                        record_voice_turn(conversation_id, "user", text)
+                        record_voice_turn_opik(conversation_id, "user", text)
+                        logger.debug(f"[{conversation_id}] text_input injected")
+
                 elif msg_type == "image":
                     raw = base64.b64decode(msg.get("data", ""))
                     mime = msg.get("mime_type", "image/jpeg")
@@ -160,6 +196,20 @@ async def _flush_turn_buffer(conversation_id: str) -> None:
     _turn_buffer[conversation_id] = {"user": [], "model": []}
 
 
+def _tool_status_label(tool_name: str) -> str:
+    labels = {
+        "google_search": "Searching Google",
+        "get_user_location": "Checking your location",
+        "find_nearby_places": "Searching maps",
+        "request_clarification": "Shaping your request",
+        "generate_and_confirm_prd": "Creating project plan",
+        "confirm_and_dispatch": "Starting build",
+        "start_background_job": "Starting background job",
+        "lookup_project": "Looking up your project",
+    }
+    return labels.get(tool_name, tool_name.replace("_", " ").strip().title())
+
+
 async def _downstream_task(
     websocket: WebSocket,
     live_events,
@@ -183,6 +233,38 @@ async def _downstream_task(
             # Structured session log — tool calls, transcripts, turn markers
             log_adk_event(conversation_id, event)
 
+            fn_calls = event.get_function_calls() if hasattr(event, "get_function_calls") else []
+            activity_timings = _tool_activity_timings.setdefault(conversation_id, {})
+            for fc in fn_calls:
+                activity_id = getattr(fc, "id", None) or fc.name
+                activity_timings[activity_id] = time.monotonic()
+                await websocket.send_text(json.dumps({
+                    "type": "tool_status",
+                    "activity_id": activity_id,
+                    "tool_name": fc.name,
+                    "label": _tool_status_label(fc.name),
+                    "status": "running",
+                }))
+
+            fn_responses = event.get_function_responses() if hasattr(event, "get_function_responses") else []
+            for fr in fn_responses:
+                activity_id = getattr(fr, "id", None) or fr.name
+                started_at = activity_timings.pop(activity_id, None)
+                duration_ms = None
+                if started_at is None and fr.name in activity_timings:
+                    started_at = activity_timings.pop(fr.name, None)
+                if started_at is not None:
+                    duration_ms = int((time.monotonic() - started_at) * 1000)
+
+                await websocket.send_text(json.dumps({
+                    "type": "tool_status",
+                    "activity_id": activity_id,
+                    "tool_name": fr.name,
+                    "label": _tool_status_label(fr.name),
+                    "status": "completed",
+                    "duration_ms": duration_ms,
+                }))
+
             if event.interrupted:
                 await websocket.send_text(json.dumps({"type": "interrupted"}))
                 logger.debug(f"[{conversation_id}] interrupted forwarded to phone")
@@ -199,6 +281,10 @@ async def _downstream_task(
             for part in event.content.parts:
                 if part.text:
                     if event.content.role == "user":
+                        pending = _pending_text_inputs.get(conversation_id, [])
+                        if not event.partial and pending and pending[0] == part.text:
+                            pending.pop(0)
+                            continue
                         await websocket.send_text(json.dumps({
                             "type": "input_transcript",
                             "text": part.text,
@@ -258,6 +344,8 @@ async def _downstream_task(
     finally:
         # Flush any remaining buffered text so the last turn isn't lost
         await _flush_turn_buffer(conversation_id)
+        _pending_text_inputs.pop(conversation_id, None)
+        _tool_activity_timings.pop(conversation_id, None)
 
 
 @router.websocket("/voice/{conversation_id}")
@@ -265,6 +353,7 @@ async def voice_websocket(
     websocket: WebSocket,
     conversation_id: str,
     token: str | None = Query(default=None),
+    voice_language: str | None = Query(default=None),
 ) -> None:
     """Bidirectional voice bridge between the phone and ADK/Gemini Live."""
     payload = _extract_jwt(websocket, token)
@@ -280,6 +369,12 @@ async def voice_websocket(
     await websocket.accept()
 
     await audio_session_manager.get_or_create_entry(conversation_id, user_id)
+    speech_preferences = build_speech_preferences(voice_language)
+    logger.info(
+        f"[{conversation_id}] Live speech preferences: "
+        f"language={speech_preferences.get('voice_language')} "
+        f"voice={speech_preferences.get('voice_name')}"
+    )
 
     try:
         session = await gemini_live_client.get_or_create_session(
@@ -304,6 +399,7 @@ async def voice_websocket(
             user_id=user_id,
             session_id=conversation_id,
             live_request_queue=live_request_queue,
+            speech_preferences=speech_preferences,
         )
 
         # Always inject a session-start prompt so Gervis speaks first.
@@ -348,6 +444,14 @@ async def voice_websocket(
                     "Greet the user briefly and ask what they'd like to build or explore today."
                 )
                 logger.info(f"[{conversation_id}] Injecting new-session greeting prompt")
+
+        language_instruction = speech_preferences.get("language_instruction")
+        if language_instruction:
+            session_prompt = (
+                "[SYSTEM - follow this for the full session] "
+                f"{language_instruction} "
+                f"{session_prompt}"
+            )
 
         try:
             live_request_queue.send_content(
@@ -401,6 +505,8 @@ async def voice_websocket(
         log_session_end(conversation_id)
         opik_session_end(conversation_id)
         _turn_buffer.pop(conversation_id, None)
+        _pending_text_inputs.pop(conversation_id, None)
+        _tool_activity_timings.pop(conversation_id, None)
         logger.info(f"[{conversation_id}] Phone disconnected, starting grace timer")
         location_channels.unregister(conversation_id)
         control_channels.unregister(conversation_id)

@@ -68,7 +68,11 @@ class ConversationRepository(private val http: OkHttpClient = defaultClient) {
                 .delete()
                 .header("Authorization", "Bearer $jwt")
                 .build()
-            runCatching { http.newCall(request).execute().code in 200..299 }.getOrDefault(false)
+            runCatching {
+                http.newCall(request).execute().use { response ->
+                    response.code in 200..299 || response.code == 404
+                }
+            }.getOrDefault(false)
         }
 
     /**

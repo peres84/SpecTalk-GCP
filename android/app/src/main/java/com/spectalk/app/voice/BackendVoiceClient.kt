@@ -9,7 +9,9 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlin.math.max
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -18,9 +20,16 @@ sealed interface VoiceClientEvent {
     data object Connected : VoiceClientEvent
     data object Connecting : VoiceClientEvent
     data class AudioChunk(val bytes: ByteArray) : VoiceClientEvent
-    data class InputTranscript(val text: String) : VoiceClientEvent
-    data class OutputTranscript(val text: String) : VoiceClientEvent
+    data class InputTranscript(val text: String, val isPartial: Boolean) : VoiceClientEvent
+    data class OutputTranscript(val text: String, val isPartial: Boolean) : VoiceClientEvent
+    data class ToolStatus(
+        val activityId: String,
+        val label: String,
+        val status: String,
+        val durationMs: Long? = null,
+    ) : VoiceClientEvent
     data object Interrupted : VoiceClientEvent
+    data object TurnComplete : VoiceClientEvent
     /**
      * Backend conversation state changed.
      * For "awaiting_confirmation", [prdSummary] carries the project spec to display.
@@ -69,8 +78,14 @@ class BackendVoiceClient(
     @Volatile private var webSocket: WebSocket? = null
     @Volatile private var isConnected: Boolean = false
 
-    fun connect(conversationId: String) {
-        val url = "$backendUrl/ws/voice/$conversationId"
+    fun connect(conversationId: String, voiceLanguage: String? = null) {
+        val url = buildString {
+            append("$backendUrl/ws/voice/$conversationId")
+            if (!voiceLanguage.isNullOrBlank()) {
+                append("?voice_language=")
+                append(URLEncoder.encode(voiceLanguage, Charsets.UTF_8.name()))
+            }
+        }
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $productJwt")
@@ -158,6 +173,17 @@ class BackendVoiceClient(
         webSocket?.send(payload.toString())
     }
 
+    /** Send a text chat message into the active live session. */
+    fun sendTextInput(text: String) {
+        if (!isConnected || text.isBlank()) return
+        webSocket?.send(
+            JSONObject()
+                .put("type", "text_input")
+                .put("text", text)
+                .toString(),
+        )
+    }
+
     /** Signal barge-in (user interrupted Gervis). */
     fun sendInterrupt() {
         if (!isConnected) return
@@ -175,13 +201,47 @@ class BackendVoiceClient(
         val json = JSONObject(message)
         when (val type = json.optString("type")) {
             "interrupted" -> _events.tryEmit(VoiceClientEvent.Interrupted)
+            "turn_complete" -> _events.tryEmit(VoiceClientEvent.TurnComplete)
             "input_transcript" -> {
                 val text = json.optString("text")
-                if (text.isNotBlank()) _events.tryEmit(VoiceClientEvent.InputTranscript(text))
+                if (text.isNotBlank()) {
+                    _events.tryEmit(
+                        VoiceClientEvent.InputTranscript(
+                            text = text,
+                            isPartial = json.optBoolean("is_partial", false),
+                        ),
+                    )
+                }
             }
             "output_transcript" -> {
                 val text = json.optString("text")
-                if (text.isNotBlank()) _events.tryEmit(VoiceClientEvent.OutputTranscript(text))
+                if (text.isNotBlank()) {
+                    _events.tryEmit(
+                        VoiceClientEvent.OutputTranscript(
+                            text = text,
+                            isPartial = json.optBoolean("is_partial", false),
+                        ),
+                    )
+                }
+            }
+            "tool_status" -> {
+                val activityId = json.optString("activity_id")
+                val label = json.optString("label")
+                val status = json.optString("status")
+                if (activityId.isNotBlank() && label.isNotBlank() && status.isNotBlank()) {
+                    _events.tryEmit(
+                        VoiceClientEvent.ToolStatus(
+                            activityId = activityId,
+                            label = label,
+                            status = status,
+                            durationMs = if (json.has("duration_ms")) {
+                                max(0L, json.optLong("duration_ms"))
+                            } else {
+                                null
+                            },
+                        )
+                    )
+                }
             }
             "state_update" -> {
                 val state = json.optString("state")

@@ -1,13 +1,24 @@
 package com.spectalk.app.voice
 
-data class ConversationTurn(val role: String, val text: String)
+data class ConversationTurn(
+    val role: String,
+    val text: String,
+    val kind: String = "message",
+    val imagePath: String? = null,
+    val activityId: String? = null,
+    val activityStatus: String? = null,
+    val activityDurationMs: Long? = null,
+)
 
 data class VoiceSessionUiState(
     val isConnecting: Boolean = false,
     val isConnected: Boolean = false,
     val isMicStreaming: Boolean = false,
+    val isListeningEnabled: Boolean = true,
+    val isAudioPlaybackEnabled: Boolean = true,
     val statusMessage: String = "Disconnected",
     val turns: List<ConversationTurn> = emptyList(),
+    val draftText: String = "",
     val activeJobDescription: String = "",
     val recentError: String? = null,
     val isWakeWordDeviceConnected: Boolean = false,

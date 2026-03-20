@@ -10,6 +10,148 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.11] - Hybrid live chat text input over the voice WebSocket
+
+**Modified files:** `ws/voice_handler.py`
+
+#### Voice WebSocket now accepts in-session text messages
+
+The live voice bridge previously only accepted microphone audio, images, and location updates.
+That meant the Android app could not stay inside the same live Gemini session when the user
+wanted to stop listening and continue by text.
+
+Fix:
+
+- `ws/voice_handler.py` now accepts `{"type": "text_input", "text": "..."}` from the phone
+- text messages are injected into the active ADK/Gemini live session through the existing
+  `LiveRequestQueue`
+- the text is persisted immediately to the conversation history so a rejoin still shows the
+  user's typed messages
+
+#### Duplicate user turns are suppressed when the live session echoes typed text
+
+Some Gemini live flows can emit the injected user text back through normal transcript events.
+The voice bridge now keeps a small per-conversation pending-text buffer so those echoed user
+events are not forwarded or buffered a second time, which prevents duplicate chat rows and
+duplicate stored turns for typed messages.
+
+---
+
+### [Phase 5.12] - Conversation delete fix for saved projects
+
+**Modified files:** `api/conversations.py`
+
+#### Deleting a conversation no longer fails when its jobs are referenced by the project registry
+
+Some conversations include completed coding jobs that are still referenced by
+`user_projects.last_job_id`. The delete endpoint already removed `resume_events`, `turns`,
+`assets`, and `jobs` in FK-safe order, but it did not clear that project-registry reference
+first. As a result, deleting the conversation could fail with a foreign-key violation and the
+Android app would show the conversation coming back after reload.
+
+Fix:
+
+- `api/conversations.py` now sets `UserProject.last_job_id = NULL` for any saved project that
+  points at a job belonging to the conversation being deleted, before deleting the jobs
+- project memory is preserved, but its link to the deleted job is cleared safely
+
+---
+
+### [Phase 5.13] - Database-level cascade rules for conversations, jobs, and users
+
+**Modified files:** `db/models.py`, `migrations/versions/f1c9b7e2a4d5_cascade_job_and_conversation_deletes.py`
+
+#### Jobs now delete automatically with their conversation, and user-owned records cascade on user delete
+
+To make cleanup more reliable, the schema now declares explicit `ON DELETE` behavior for the
+main ownership graph instead of relying only on application-layer delete ordering.
+
+Added database-level rules:
+
+- `jobs.conversation_id -> conversations.id` uses `ON DELETE CASCADE`
+- `jobs.user_id -> users.id` uses `ON DELETE CASCADE`
+- `conversations.user_id -> users.id` uses `ON DELETE CASCADE`
+- conversation-owned records (`turns`, `pending_actions`, `resume_events`, `assets`) now cascade
+  when their parent conversation is deleted
+- `resume_events.job_id -> jobs.id` uses `ON DELETE CASCADE`
+- `user_projects.last_job_id -> jobs.id` uses `ON DELETE SET NULL`
+- other user-owned tables (`user_integrations`, `user_projects`, `assets`) now cascade on user delete
+
+Result:
+
+- deleting a conversation removes its jobs at the database level
+- deleting a user can clean up user-owned jobs and related records consistently
+- saved project metadata survives conversation cleanup, but its `last_job_id` link is nulled if
+  the referenced job is deleted
+
+---
+
+### [Phase 5.14] - Prevent reasoning from leaking into spoken assistant replies
+
+**Modified files:** `agents/orchestrator.py`
+
+#### Gervis is now instructed to keep analysis internal and only speak the final answer
+
+The voice-agent instruction now explicitly forbids exposing internal reasoning, planning, or
+analysis in user-facing speech. It also blocks meta section titles like `Reasoning`,
+`Analysis`, `Thought process`, or similar labels from appearing in spoken output.
+
+Goal:
+
+- Gervis should think silently
+- the user should hear only the final natural answer
+- the chat transcript should stop mixing internal analysis with the concise spoken reply
+
+---
+
+### [Phase 5.15] - Live tool activity events for the Android chat
+
+**Modified files:** `ws/voice_handler.py`
+
+#### Tool calls now emit lightweight progress events to the phone during a live session
+
+The live WebSocket bridge now watches ADK function-call and function-response events and forwards
+small `tool_status` messages to the Android client while the tool is running.
+
+Examples:
+
+- `google_search` -> `Searching Google`
+- `find_nearby_places` -> `Searching maps`
+- `lookup_project` -> `Looking up your project`
+- `generate_and_confirm_prd` -> `Creating project plan`
+
+Completed events include elapsed time in milliseconds so the Android app can show a compact
+duration like `30s` or `1m30s` next to a check mark.
+
+---
+
+### [Phase 5.16] - Live voice/language selection per app session
+
+**Modified files:** `services/gemini_live_client.py`, `services/speech_preferences.py`, `ws/voice_handler.py`, `config.py`
+
+#### Gemini Live voice output now uses explicit speech configuration and app-selected language guidance
+
+The Live session builder now applies `speech_config.voice_config.prebuilt_voice_config.voice_name`
+for Gemini Live audio output and accepts a per-connection `voice_language` hint from the Android
+app.
+
+Added:
+
+- `services/speech_preferences.py` to normalize the supported app languages:
+  `en-US`, `en-GB`, `de-DE`, and `es-US`
+- `config.py` default `gemini_voice_name="Algieba"` for the Live voice output
+- `services/gemini_live_client.py` now injects `SpeechConfig` into the Live `RunConfig`
+- `ws/voice_handler.py` now reads `?voice_language=...` on the WebSocket and injects a
+  session-level language instruction so Gervis stays in the selected language
+
+Important note:
+
+- Vertex AI Live currently documents `en-US`, `de-DE`, and `es-US` as supported Live languages
+- `en-GB` is not listed in the current Live language table, so UK English is enforced through
+  session instructions rather than a Live `language_code` value
+
+---
+
 ### [Phase 5.10] - Existing-project edit reuse + dev-server URL handoff + data-only resume pushes
 
 **Modified files:** `tools/project_tools.py`, `tools/coding_tools.py`, `api/conversations.py`, `tools/openclaw_coding_tool.py`, `services/conversation_service.py`, `services/notification_service.py`

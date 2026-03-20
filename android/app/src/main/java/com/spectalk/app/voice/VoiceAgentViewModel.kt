@@ -49,6 +49,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     private var connectTimeoutJob: Job? = null
     private var inactivityJob: Job? = null
     private var cameraStateJob: Job? = null
+    private var backgroundStopJob: Job? = null
 
     // Tracks whether we've sent ack-resume-event for the current session.
     // Reset on each new session so the ack fires exactly once per reconnect.
@@ -59,6 +60,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
 
     private var soundPool: SoundPool? = null
     private var activationSoundId: Int = 0
+    private var pendingUserTranscript: String? = null
+    private var pendingAssistantTranscript: String? = null
 
     // Updated on every outgoing audio chunk. The inactivity timer checks this so it
     // doesn't fire while the user is actively speaking (before a transcript arrives).
@@ -87,6 +90,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         // and returns early — prevents two WebSocket connections if startSession() is
         // called twice before the coroutine runs.
         resumeEventAcked = false
+        pendingUserTranscript = null
+        pendingAssistantTranscript = null
         _uiState.update { it.copy(isConnecting = true) }
 
         viewModelScope.launch {
@@ -133,8 +138,11 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 backendUrl = BackendConfig.wsBaseUrl,
                 productJwt = jwt,
             )
-            val player = PcmAudioPlayer()
-            player.start(viewModelScope)
+            val player = PcmAudioPlayer(getApplication())
+            player.start(
+                scope = viewModelScope,
+                preferSpeaker = !ConnectedDeviceMonitor.state.value.isWakeWordReady,
+            )
 
             backendClient = client
             audioPlayer = player
@@ -143,8 +151,11 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 it.copy(
                     isConnected = false,
                     isMicStreaming = false,
+                    isListeningEnabled = true,
+                    isAudioPlaybackEnabled = true,
                     statusMessage = "Connecting to Gervis...",
                     conversationId = resolvedConversationId,
+                    draftText = "",
                 )
             }
 
@@ -162,7 +173,13 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 client.events.collect { event -> handleClientEvent(event) }
             }
 
-            client.connect(resolvedConversationId)
+            val preferredVoiceLanguage = AppPreferences
+                .getAgentVoiceLanguage(getApplication())
+                .prefValue
+            client.connect(
+                conversationId = resolvedConversationId,
+                voiceLanguage = preferredVoiceLanguage,
+            )
 
             // Start glasses camera if Meta wearable is connected
             if (ConnectedDeviceMonitor.state.value.hasMetaWearable) {
@@ -182,6 +199,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     fun disconnect(resumeHotword: Boolean = true) {
         if (resumeHotword) HotwordEventBus.resume()
         cancelTimers()
+        backgroundStopJob?.cancel()
+        backgroundStopJob = null
         stopMicrophone(sendEndOfSpeech = true)
         clientEventsJob?.cancel()
         clientEventsJob = null
@@ -192,15 +211,108 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         cameraStateJob?.cancel()
         cameraStateJob = null
         GlassesCameraManager.stopSession()
+        pendingUserTranscript = null
+        pendingAssistantTranscript = null
 
         _uiState.update {
             it.copy(
                 isConnecting = false,
                 isConnected = false,
                 isMicStreaming = false,
+                isListeningEnabled = true,
+                isAudioPlaybackEnabled = true,
                 statusMessage = "Disconnected",
                 isGlassesCameraReady = false,
             )
+        }
+    }
+
+    fun reconnect() {
+        startSession(_uiState.value.conversationId)
+    }
+
+    fun onChatScreenStarted() {
+        backgroundStopJob?.cancel()
+        backgroundStopJob = null
+    }
+
+    fun onChatScreenInactive() {
+        if (!(_uiState.value.isConnected || _uiState.value.isConnecting)) return
+
+        backgroundStopJob?.cancel()
+        backgroundStopJob = if (_uiState.value.isWakeWordDeviceConnected) {
+            viewModelScope.launch {
+                delay(INACTIVITY_TIMEOUT_MS)
+                if (_uiState.value.isConnected || _uiState.value.isConnecting) {
+                    Log.i(TAG, "Chat inactive for 20s with wearable audio â€” ending voice session.")
+                    disconnect()
+                }
+            }
+        } else {
+            viewModelScope.launch {
+                Log.i(TAG, "Chat screen no longer active â€” ending voice session.")
+                disconnect()
+            }
+        }
+    }
+
+    fun onChatScreenStopped() {
+        if (_uiState.value.isConnected || _uiState.value.isConnecting) {
+            Log.i(TAG, "Chat screen no longer active — ending voice session.")
+            disconnect()
+        }
+    }
+
+    fun setDraftText(text: String) {
+        _uiState.update { it.copy(draftText = text) }
+    }
+
+    fun toggleListeningEnabled() {
+        val state = _uiState.value
+        if (!state.isConnected) return
+
+        if (state.isListeningEnabled) {
+            cancelInactivityOnly()
+            stopMicrophone(sendEndOfSpeech = true)
+            audioPlayer?.clear()
+            _uiState.update {
+                it.copy(
+                    isListeningEnabled = false,
+                    isAudioPlaybackEnabled = false,
+                    statusMessage = "Text mode",
+                )
+            }
+        } else {
+            val started = startMicrophone()
+            if (started) {
+                _uiState.update {
+                    it.copy(
+                        isListeningEnabled = true,
+                        isAudioPlaybackEnabled = true,
+                        statusMessage = "Connected — listening...",
+                    )
+                }
+                if (_uiState.value.isListeningEnabled) {
+                    resetInactivityTimer()
+                }
+            }
+        }
+    }
+
+    fun sendDraftText() {
+        val client = backendClient ?: return
+        val text = _uiState.value.draftText.trim()
+        if (text.isBlank()) return
+
+        client.sendTextInput(text)
+        _uiState.update { state ->
+            state.copy(
+                draftText = "",
+                turns = appendCommittedTurn(state.turns, "user", text),
+            )
+        }
+        if (_uiState.value.isListeningEnabled) {
+            resetInactivityTimer()
         }
     }
 
@@ -234,36 +346,43 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                     )
                 }
                 playActivationSound()
-                startMicrophone()
-                resetInactivityTimer()
+                if (_uiState.value.isListeningEnabled && startMicrophone()) {
+                    resetInactivityTimer()
+                }
             }
 
             is VoiceClientEvent.AudioChunk -> {
-                audioPlayer?.enqueue(event.bytes)
+                if (_uiState.value.isAudioPlaybackEnabled) {
+                    audioPlayer?.enqueue(event.bytes)
+                }
             }
 
             is VoiceClientEvent.Interrupted -> {
                 audioPlayer?.clear()
-                _uiState.update { it.copy(statusMessage = "Interrupted") }
+                pendingAssistantTranscript = null
+                _uiState.update { state ->
+                    state.copy(
+                        statusMessage = "Interrupted",
+                        turns = appendSystemTurn(state.turns, "You interrupted Gervis"),
+                    )
+                }
             }
 
             is VoiceClientEvent.InputTranscript -> {
-                _uiState.update { state ->
-                    state.copy(turns = upsertTurn(state.turns, "user", event.text))
+                pendingUserTranscript = mergeTranscriptFragment(pendingUserTranscript, event.text)
+                if (_uiState.value.isListeningEnabled) {
+                    resetInactivityTimer()
                 }
-                resetInactivityTimer()
 
-                val lower = event.text.lowercase().trim()
-                if (lower.contains("goodbye") || lower.contains("good bye")) {
+                val lower = pendingUserTranscript.orEmpty().lowercase().trim()
+                if (!event.isPartial && (lower.contains("goodbye") || lower.contains("good bye"))) {
                     Log.i(TAG, "Goodbye detected — ending voice session.")
                     disconnect()
                 }
             }
 
             is VoiceClientEvent.OutputTranscript -> {
-                _uiState.update { state ->
-                    state.copy(turns = upsertTurn(state.turns, "assistant", event.text))
-                }
+                pendingAssistantTranscript = mergeTranscriptFragment(pendingAssistantTranscript, event.text)
                 resetInactivityTimer()
                 // Ack any pending resume events after Gervis delivers its first spoken
                 // output (the welcome-back message). The endpoint is idempotent so calling
@@ -279,6 +398,25 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                         }
                     }
                 }
+            }
+
+            is VoiceClientEvent.ToolStatus -> {
+                _uiState.update { state ->
+                    state.copy(
+                        turns = upsertActivityTurn(
+                            turns = state.turns,
+                            activityId = event.activityId,
+                            label = event.label,
+                            status = event.status,
+                            durationMs = event.durationMs,
+                        )
+                    )
+                }
+            }
+
+            VoiceClientEvent.TurnComplete -> {
+                flushPendingTranscript(role = "user")
+                flushPendingTranscript(role = "assistant")
             }
 
             is VoiceClientEvent.StateUpdate -> {
@@ -345,6 +483,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                         isConnecting = false,
                         isConnected = false,
                         isMicStreaming = false,
+                        isListeningEnabled = true,
+                        isAudioPlaybackEnabled = true,
                         statusMessage = event.message,
                     )
                 }
@@ -360,11 +500,15 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 backendClient = null
                 audioPlayer?.stop()
                 audioPlayer = null
+                pendingUserTranscript = null
+                pendingAssistantTranscript = null
                 _uiState.update {
                     it.copy(
                         isConnecting = false,
                         isConnected = false,
                         isMicStreaming = false,
+                        isListeningEnabled = true,
+                        isAudioPlaybackEnabled = true,
                         statusMessage = event.reason.ifBlank { "Disconnected" },
                     )
                 }
@@ -383,6 +527,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 backendClient = null
                 clientEventsJob?.cancel()
                 clientEventsJob = null
+                pendingUserTranscript = null
+                pendingAssistantTranscript = null
                 HotwordEventBus.resume()
                 _uiState.update {
                     it.copy(
@@ -401,9 +547,9 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun startMicrophone() {
-        if (_uiState.value.isMicStreaming) return
-        val client = backendClient ?: return
+    private fun startMicrophone(): Boolean {
+        if (_uiState.value.isMicStreaming) return true
+        val client = backendClient ?: return false
         val recorder = audioRecorder ?: AndroidAudioRecorder().also { audioRecorder = it }
 
         val started = recorder.start(viewModelScope) { chunk ->
@@ -417,10 +563,11 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
 
         if (!started) {
             setError("Microphone could not be started.")
-            return
+            return false
         }
 
         _uiState.update { it.copy(isMicStreaming = true) }
+        return true
     }
 
     private fun stopMicrophone(sendEndOfSpeech: Boolean) {
@@ -433,6 +580,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun resetInactivityTimer() {
+        if (!_uiState.value.isListeningEnabled) return
         inactivityJob?.cancel()
         inactivityJob = viewModelScope.launch {
             while (true) {
@@ -456,6 +604,13 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         inactivityJob = null
         connectTimeoutJob?.cancel()
         connectTimeoutJob = null
+        backgroundStopJob?.cancel()
+        backgroundStopJob = null
+    }
+
+    private fun cancelInactivityOnly() {
+        inactivityJob?.cancel()
+        inactivityJob = null
     }
 
     private fun initActivationSound() {
@@ -483,6 +638,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     private fun observeConnectedDevices() {
         viewModelScope.launch {
             ConnectedDeviceMonitor.state.collect { state ->
+                audioPlayer?.setPreferSpeaker(!state.isWakeWordReady)
                 _uiState.update { it.copy(isWakeWordDeviceConnected = state.isWakeWordReady) }
             }
         }
@@ -495,16 +651,103 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             .getOrNull()
     }
 
-    private fun upsertTurn(
+    private fun mergeTranscriptFragment(current: String?, incoming: String): String? {
+        val next = incoming.trim()
+        if (next.isBlank()) return current
+
+        val existing = current?.trim().orEmpty()
+        return when {
+            existing.isBlank() -> next
+            existing == next -> existing
+            next.startsWith(existing) -> next
+            else -> "$existing $next"
+        }
+    }
+
+    private fun appendCommittedTurn(
         turns: List<ConversationTurn>,
         role: String,
         text: String,
     ): List<ConversationTurn> {
         val last = turns.lastOrNull()
-        return if (last != null && last.role == role) {
-            turns.dropLast(1) + ConversationTurn(role, text)
+        return if (
+            last != null &&
+            last.kind == "message" &&
+            last.role == role &&
+            last.text == text
+        ) {
+            turns
         } else {
             turns + ConversationTurn(role, text)
+        }
+    }
+
+    private fun appendSystemTurn(
+        turns: List<ConversationTurn>,
+        text: String,
+    ): List<ConversationTurn> {
+        val last = turns.lastOrNull()
+        return if (last?.kind == "interruption" && last.text == text) {
+            turns
+        } else {
+            turns + ConversationTurn(role = "system", text = text, kind = "interruption")
+        }
+    }
+
+    private fun appendImageTurn(
+        turns: List<ConversationTurn>,
+        text: String,
+        imagePath: String?,
+    ): List<ConversationTurn> {
+        return turns + ConversationTurn(
+            role = "user",
+            text = text,
+            kind = "image",
+            imagePath = imagePath,
+        )
+    }
+
+    private fun upsertActivityTurn(
+        turns: List<ConversationTurn>,
+        activityId: String,
+        label: String,
+        status: String,
+        durationMs: Long?,
+    ): List<ConversationTurn> {
+        val existingIndex = turns.indexOfLast {
+            it.kind == "activity" && it.activityId == activityId
+        }
+        val updatedTurn = ConversationTurn(
+            role = "system",
+            text = label,
+            kind = "activity",
+            activityId = activityId,
+            activityStatus = status,
+            activityDurationMs = durationMs,
+        )
+
+        return if (existingIndex >= 0) {
+            turns.toMutableList().apply { set(existingIndex, updatedTurn) }
+        } else {
+            turns + updatedTurn
+        }
+    }
+
+    private fun flushPendingTranscript(role: String) {
+        val pending = when (role) {
+            "user" -> pendingUserTranscript
+            "assistant" -> pendingAssistantTranscript
+            else -> null
+        }?.takeIf { it.isNotBlank() } ?: return
+
+        if (role == "user") {
+            pendingUserTranscript = null
+        } else {
+            pendingAssistantTranscript = null
+        }
+
+        _uiState.update { state ->
+            state.copy(turns = appendCommittedTurn(state.turns, role, pending))
         }
     }
 
@@ -548,8 +791,27 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             when (val result = GlassesCameraManager.capturePhoto()) {
                 is CaptureResult.Success -> {
+                    val savedImagePath = runCatching {
+                        GalleryRepository
+                            .saveImage(getApplication(), result.jpegBytes, "glasses")
+                            .absolutePath
+                    }.onFailure { error ->
+                        Log.w(TAG, "Could not save glasses capture to gallery: ${error.message}")
+                    }.getOrNull()
+
+                    _uiState.update { state ->
+                        state.copy(
+                            turns = appendImageTurn(
+                                state.turns,
+                                "Shared your glasses view",
+                                savedImagePath,
+                            )
+                        )
+                    }
                     client.sendImage(result.jpegBytes)
-                    GalleryRepository.saveImage(getApplication(), result.jpegBytes, "glasses")
+                    if (_uiState.value.isListeningEnabled) {
+                        resetInactivityTimer()
+                    }
                     Log.i(TAG, "Glasses frame sent (${result.jpegBytes.size} bytes)")
                 }
                 is CaptureResult.Failure -> {
@@ -564,7 +826,26 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     fun sendCameraImage(jpegBytes: ByteArray) {
         val client = backendClient ?: return
         viewModelScope.launch {
-            GalleryRepository.saveImage(getApplication(), jpegBytes, "camera")
+            val savedImagePath = runCatching {
+                GalleryRepository
+                    .saveImage(getApplication(), jpegBytes, "camera")
+                    .absolutePath
+            }.onFailure { error ->
+                Log.w(TAG, "Could not save camera image to gallery: ${error.message}")
+            }.getOrNull()
+
+            _uiState.update { state ->
+                state.copy(
+                    turns = appendImageTurn(
+                        state.turns,
+                        "Shared a photo",
+                        savedImagePath,
+                    )
+                )
+            }
+            if (_uiState.value.isListeningEnabled) {
+                resetInactivityTimer()
+            }
             client.sendImage(jpegBytes)
             Log.i(TAG, "Camera image sent (${jpegBytes.size} bytes)")
         }

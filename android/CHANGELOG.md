@@ -19,6 +19,63 @@ Newest entries at the top.
 - If the permission is denied, the app stays in the active conversation and shows a snackbar
   instead of trying to open the camera unsafely.
 
+#### Launching the phone camera no longer ends the chat session
+- `ui/screens/VoiceSessionScreen.kt` now treats the temporary app hop into the phone camera as
+  an allowed capture flow instead of a real chat exit.
+- Result: taking a photo from the in-chat camera action no longer triggers the foreground-only
+  session shutdown before the image comes back.
+
+#### In-app phone sessions now explicitly use the speaker when no wearable audio route is active
+- `audio/PcmAudioPlayer.kt` now prefers the built-in speaker during an active voice session when
+  no Meta wearable or Bluetooth audio device is connected.
+- This routing is only applied while the in-app conversation is open, and the previous audio
+  route is restored when the session ends.
+
+#### Live transcript no longer fills the chat with partial chunk updates
+- `voice/BackendVoiceClient.kt` now preserves the backend `is_partial` and `turn_complete`
+  metadata for transcript events.
+- `voice/VoiceAgentViewModel.kt` now commits only final spoken turns into the conversation list
+  and adds an explicit interruption event when the user barges in over Gervis.
+- The Android transcript buffer now waits for `turn_complete` before rendering a spoken user or
+  assistant turn in chat, so phrase fragments are merged into a single final message bubble.
+
+#### Assistant replies can now separate reasoning from the final spoken answer in chat
+- `ui/screens/VoiceSessionScreen.kt` now detects multi-part assistant replies and renders them
+  as a muted `Reasoning` section plus a clearer `Spoken` section when the transcript contains
+  both.
+- This improves readability for legacy or verbose assistant turns while keeping the user-facing
+  spoken answer visually distinct.
+
+#### Tool activity chips now appear in the live chat
+- The conversation view now shows small centered activity chips when Gervis is using tools like
+  Google search, maps, project lookup, or build planning.
+- Running tools show a tiny spinner and description; completed tools switch to a check mark and
+  show the elapsed time in a compact format like `30s` or `1m30s`.
+
+#### Voice language can now be selected from Settings
+- `settings/AppPreferences.kt` now stores a preferred Gervis voice language with four app-facing
+  options: English (US), English (UK), Spanish, and German.
+- `ui/screens/SettingsScreen.kt` now exposes that selector directly in the Voice section so the
+  next voice session connects using the chosen language preference.
+- The selected language is sent with each live chat connection, which means changing Settings
+  affects the next joined session without needing a new backend profile system.
+
+#### Hybrid in-app chat mode keeps text and images available without keeping the mic on
+- `ui/screens/VoiceSessionScreen.kt` now adds a real text composer with send, image, and
+  listening-toggle actions directly in the conversation view.
+- `voice/VoiceAgentViewModel.kt` now separates session connectivity from microphone capture, so
+  the user can turn listening off and continue with text and image messages while the chat screen
+  remains active.
+- When listening is off, replies stay in the transcript only; when listening is on, spoken output
+  continues as before.
+
+#### Foreground-only session retention now controls when a chat must be rejoined
+- Leaving the conversation screen, backgrounding the app, or otherwise making the chat inactive
+  now ends the active session path instead of silently keeping it alive indefinitely.
+- If a Meta wearable or Bluetooth audio device is connected, the app allows a short 20-second
+  inactive window before closing; otherwise the session is closed immediately when the chat is no
+  longer actively in use.
+
 #### Notification auto-resume now triggers immediately when wearable audio is connected
 - `notifications/FcmService.kt` now auto-resumes the target conversation immediately when a
   Meta wearable or Bluetooth audio device is connected, even if the manual
@@ -38,7 +95,34 @@ Newest entries at the top.
 - Result: the conversation list should no longer accumulate several `Active` rows that were
   left over from previous sessions.
 
+#### Swiped conversations no longer pop back into the list during reload races
+- `conversations/HomeViewModel.kt` now tracks conversations that are currently being deleted and
+  filters them out of incoming reload results until the backend delete request finishes.
+- Result: a conversation that was swiped away should not briefly reappear after pull-to-refresh
+  or screen resume while the delete is still in flight.
+
+#### Deleting the final remaining conversation is more resilient now
+- `conversations/HomeViewModel.kt` now retries a failed delete once and refreshes from the
+  backend after a successful delete so the empty state and server state stay aligned.
+- `conversations/ConversationRepository.kt` now closes the HTTP delete response properly and
+  treats `404` as already-deleted success.
+
 ### Added
+
+#### Camera captures now show inline in chat and are saved for both phone and Meta glasses
+- `voice/VoiceAgentViewModel.kt` now stores the saved gallery file path for captured images
+  before appending the chat turn, so both phone-camera and Meta-glasses captures can render as
+  real image previews in the conversation.
+- `ui/screens/VoiceSessionScreen.kt` now renders image turns as preview cards in the transcript
+  instead of text-only pills.
+- Result: taking a photo from the phone or capturing a frame from Meta glasses sends it to
+  Gemini automatically, shows it in chat, and saves it into Gallery from the same action.
+
+#### Tutorial page added to the app sidebar
+- Added a short in-app tutorial screen with the current interaction rules for voice, text,
+  images, Meta glasses, and session behavior.
+- `AppDrawer.kt`, `Screen.kt`, and `SpecTalkNavGraph.kt` now expose that page as a menu
+  destination so users can open it directly from the sidebar.
 
 #### In-app phone conversation mode and transcript refresh
 - `ui/screens/VoiceSessionScreen.kt` now makes the non-wearable behavior explicit: if the user

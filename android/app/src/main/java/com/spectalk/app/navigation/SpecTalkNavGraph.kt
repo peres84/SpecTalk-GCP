@@ -30,6 +30,7 @@ import com.spectalk.app.ui.screens.LoginScreen
 import com.spectalk.app.ui.screens.RegisterScreen
 import com.spectalk.app.ui.screens.SettingsScreen
 import com.spectalk.app.ui.screens.SplashScreen
+import com.spectalk.app.ui.screens.TutorialScreen
 import com.spectalk.app.ui.screens.VoiceSessionScreen
 import kotlinx.coroutines.launch
 
@@ -48,7 +49,12 @@ fun SpecTalkNavGraph() {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val drawerRoutes = setOf(Screen.Home.route, Screen.Gallery.route, Screen.Settings.route)
+    val drawerRoutes = setOf(
+        Screen.Home.route,
+        Screen.Gallery.route,
+        Screen.Tutorial.route,
+        Screen.Settings.route,
+    )
     val showDrawer = currentRoute in drawerRoutes
 
     fun openDrawer() = scope.launch { drawerState.open() }
@@ -144,6 +150,12 @@ fun SpecTalkNavGraph() {
                 )
             }
 
+            composable(Screen.Tutorial.route) {
+                TutorialScreen(
+                    onOpenDrawer = { openDrawer() },
+                )
+            }
+
             composable(Screen.Settings.route) {
                 SettingsScreen(
                     onNavigateBack = { navController.popBackStack() },
@@ -199,6 +211,13 @@ fun SpecTalkNavGraph() {
                     onNavigateToGallery = {
                         closeDrawer()
                         navController.navigate(Screen.Gallery.route) {
+                            popUpTo(Screen.Home.route) { inclusive = false }
+                            launchSingleTop = true
+                        }
+                    },
+                    onNavigateToTutorial = {
+                        closeDrawer()
+                        navController.navigate(Screen.Tutorial.route) {
                             popUpTo(Screen.Home.route) { inclusive = false }
                             launchSingleTop = true
                         }

@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.spectalk.app.SpecTalkApplication
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +22,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val TAG = "HomeViewModel"
+        private const val DELETE_RETRY_DELAY_MS = 450L
     }
 
     private val tokenRepository = (application as SpecTalkApplication).tokenRepository
@@ -28,6 +30,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+    private val pendingDeletionIds = mutableSetOf<String>()
 
     init {
         loadConversations()
@@ -41,7 +44,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(isLoading = true, error = null) }
             runCatching { conversationRepository.listConversations(jwt) }
                 .onSuccess { list ->
-                    _uiState.update { it.copy(conversations = list, isLoading = false) }
+                    _uiState.update {
+                        it.copy(
+                            conversations = list.filterNot { item -> item.id in pendingDeletionIds },
+                            isLoading = false,
+                        )
+                    }
                 }
                 .onFailure { e ->
                     Log.w(TAG, "Failed to load conversations: ${e.message}")
@@ -53,15 +61,53 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteConversation(conversationId: String) {
         val jwt = tokenRepository.getProductJwt()
         if (jwt.isBlank()) return
-        // Optimistic remove
-        _uiState.update { it.copy(conversations = it.conversations.filterNot { c -> c.id == conversationId }) }
+        if (!pendingDeletionIds.add(conversationId)) return
+
+        _uiState.update {
+            it.copy(
+                conversations = it.conversations.filterNot { conversation ->
+                    conversation.id == conversationId
+                }
+            )
+        }
+
         viewModelScope.launch {
-            val ok = runCatching { conversationRepository.deleteConversation(jwt, conversationId) }
-                .getOrDefault(false)
-            if (!ok) {
-                // Restore list on failure
-                Log.w(TAG, "Delete failed for $conversationId — reloading list")
+            val firstAttempt = runCatching {
+                conversationRepository.deleteConversation(jwt, conversationId)
+            }.getOrDefault(false)
+
+            val deleted = if (firstAttempt) {
+                true
+            } else {
+                delay(DELETE_RETRY_DELAY_MS)
+                runCatching {
+                    conversationRepository.deleteConversation(jwt, conversationId)
+                }.getOrDefault(false)
+            }
+
+            if (!deleted) {
+                pendingDeletionIds.remove(conversationId)
+                Log.w(TAG, "Delete failed for $conversationId after retry - reloading list")
                 loadConversations()
+                return@launch
+            }
+
+            runCatching { conversationRepository.listConversations(jwt) }
+                .onSuccess { list ->
+                    val visibleList = list.filterNot { item -> item.id in pendingDeletionIds }
+                    _uiState.update { it.copy(conversations = visibleList, isLoading = false) }
+                }
+                .onFailure { e ->
+                    Log.w(TAG, "Delete succeeded but refresh failed: ${e.message}")
+                }
+
+            pendingDeletionIds.remove(conversationId)
+            _uiState.update {
+                it.copy(
+                    conversations = it.conversations.filterNot { conversation ->
+                        conversation.id == conversationId
+                    }
+                )
             }
         }
     }

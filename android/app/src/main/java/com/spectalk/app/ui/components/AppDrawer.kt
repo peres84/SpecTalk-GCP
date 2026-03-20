@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.rounded.Mic
@@ -41,6 +42,7 @@ fun AppDrawer(
     userEmail: String,
     onNavigateToHome: () -> Unit,
     onNavigateToGallery: () -> Unit,
+    onNavigateToTutorial: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onSignOut: () -> Unit,
 ) {
@@ -84,6 +86,16 @@ fun AppDrawer(
                     selected = currentRoute == Screen.Gallery.route,
                     onClick = onNavigateToGallery,
                     supportingText = "Captured images from glasses and phone",
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                DrawerDestination(
+                    label = "Tutorial",
+                    icon = { Icon(Icons.Filled.Info, contentDescription = null) },
+                    selected = currentRoute == Screen.Tutorial.route,
+                    onClick = onNavigateToTutorial,
+                    supportingText = "Quick guide for talking, typing, and images",
                 )
 
                 Spacer(Modifier.height(16.dp))

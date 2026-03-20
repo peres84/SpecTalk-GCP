@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 from typing import Optional
 
 from db.database import get_db
-from db.models import Conversation, Turn, Job, PendingAction, ResumeEvent, Asset
+from db.models import Conversation, Turn, Job, PendingAction, ResumeEvent, Asset, UserProject
 from middleware.auth import require_auth
 
 import uuid
@@ -121,6 +121,11 @@ async def delete_conversation(
     await db.execute(delete(ResumeEvent).where(ResumeEvent.conversation_id == conv_id))
     if job_ids:
         await db.execute(delete(ResumeEvent).where(ResumeEvent.job_id.in_(job_ids)))
+        await db.execute(
+            update(UserProject)
+            .where(UserProject.last_job_id.in_(job_ids))
+            .values(last_job_id=None)
+        )
     await db.execute(delete(PendingAction).where(PendingAction.conversation_id == conv_id))
     await db.execute(delete(Turn).where(Turn.conversation_id == conv_id))
     await db.execute(delete(Asset).where(Asset.conversation_id == conv_id))
