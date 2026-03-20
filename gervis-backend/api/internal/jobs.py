@@ -93,16 +93,6 @@ async def execute_job(
             payload=body.payload or {},
         )
 
-        # Async-pending: the job executor fired an external request (e.g. OpenClaw)
-        # and will receive a callback later. Leave the job in "running" state —
-        # the callback handler (api/internal/openclaw_callback.py) will mark it
-        # "completed" and trigger FCM / live injection when the build finishes.
-        if result.get("__async_pending"):
-            logger.info(
-                f"[{conversation_id}] Job {job_id} is async-pending "
-                f"({result.get('display_summary', '')})"
-            )
-            return {"status": "pending", "job_id": job_id}
 
         spoken_summary = result.get(
             "spoken_summary",

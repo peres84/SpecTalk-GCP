@@ -10,6 +10,96 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.3] - OpenClaw OpenResponses API (SSE streaming, synchronous)
+
+**Modified files:** `tools/openclaw_coding_tool.py`, `api/internal/jobs.py`
+**New files:** `scripts/test_openclaw.py`, `docs/openclaw-user-setup.md`
+
+---
+
+#### `tools/openclaw_coding_tool.py` — rewritten for `POST /v1/responses` SSE
+
+Replaced the callback-based `POST /hooks/agent` approach with the OpenClaw
+**OpenResponses API** (`POST /v1/responses`), which must be explicitly enabled in
+`~/.openclaw/openclaw.json` under `gateway.http.endpoints.responses.enabled = true`.
+
+The endpoint is served on the **same port as the WebSocket gateway** (18789) via HTTP/WS
+multiplexing. It streams results as Server-Sent Events (SSE).
+
+New flow:
+1. Fetch user credentials from DB via `get_decrypted_integration(user_id, "openclaw")`
+2. `POST {url}/v1/responses` with `stream: true` and a 30-minute timeout
+3. Consume SSE stream, collecting `response.output_text.delta` events into a full string
+4. Return assembled result — no callback, no `__async_pending`, fully synchronous from
+   the executor's perspective
+
+Request headers:
+```
+Authorization: Bearer {token}
+x-openclaw-agent-id: main
+x-openclaw-session-key: spectalk-{job_id}
+```
+
+Request body:
+```json
+{"model": "openclaw", "input": "<PRD prompt>", "stream": true}
+```
+
+SSE events consumed:
+- `response.output_text.delta` — appended to result buffer
+- `error` — raises `RuntimeError` with the OpenClaw error message
+- All other events (`response.created`, `response.in_progress`, etc.) — ignored
+
+The session key `spectalk-{job_id}` is deterministic, giving each job an isolated
+OpenClaw conversation.
+
+Result spoken_summary is capped at 500 characters to keep Gervis responses concise.
+
+---
+
+#### `api/internal/jobs.py` — removed `__async_pending` path
+
+The `__async_pending` sentinel check was removed. It was only needed when OpenClaw used
+a callback model (fire-and-forget → callback on completion). With `POST /v1/responses`
+the coding tool blocks until OpenClaw finishes and returns the result directly — no
+callback, no pending state.
+
+---
+
+#### `scripts/test_openclaw.py` — standalone integration test
+
+New script for verifying OpenClaw connectivity without running the full backend.
+Reads `OPEN_CLAW_URL` and `OPEN_CLAW_TOKEN` from `.env`.
+
+```bash
+# From gervis-backend/:
+uv run python scripts/test_openclaw.py           # streaming (default)
+uv run python scripts/test_openclaw.py nostream  # non-streaming
+```
+
+Sends a simple "say hello" prompt and prints all SSE events. Confirmed: HTTP 200,
+`text/event-stream` content type, `response.output_text.delta` events stream correctly.
+
+---
+
+#### `docs/openclaw-user-setup.md` — end-user setup guide
+
+New complete guide covering everything a user needs to connect their own OpenClaw
+instance to SpecTalk:
+
+- **Step 1** — Enable `gateway.http.endpoints.responses` in `openclaw.json` + restart + local verify
+- **Step 2** — Extract the gateway token from `openclaw.json`
+- **Step 3A** — Tailscale Funnel setup (recommended): `tailscale funnel --bg 18789`
+  - Explains *why* Funnel is required (GCP Cloud Run is not on the tailnet — the
+    MagicDNS hostname is tailnet-only without Funnel)
+- **Step 3B** — Non-Tailscale alternatives: Cloudflare Tunnel, ngrok, SSH reverse proxy, direct IP
+- **Step 4** — Adding credentials in SpecTalk Settings
+- **Step 5** — End-to-end test with Gervis
+- Troubleshooting table for common failure modes
+- Architecture note for developers
+
+---
+
 ### [Phase 5.2] - Real OpenClaw integration + per-user encrypted credentials
 
 **New files:** `services/encryption_service.py`, `api/integrations.py`,
