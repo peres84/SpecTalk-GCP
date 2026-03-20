@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, DateTime, Text, Integer, Boolean, ForeignKey, Index, func
+from sqlalchemy import String, DateTime, Text, Integer, Boolean, ForeignKey, Index, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 
@@ -27,6 +27,7 @@ class User(Base):
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="user")
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
     assets: Mapped[list["Asset"]] = relationship(back_populates="user")
+    integrations: Mapped[list["UserIntegration"]] = relationship(back_populates="user")
 
 
 class Conversation(Base):
@@ -160,6 +161,37 @@ class ResumeEvent(Base):
 
     __table_args__ = (
         Index("idx_resume_events_conversation", "conversation_id", "is_acknowledged"),
+    )
+
+
+class UserIntegration(Base):
+    """Encrypted third-party integration credentials stored per user.
+
+    URL and token are Fernet-encrypted at rest (see services/encryption_service.py).
+    service_name is free-form but validated by the API layer (e.g. "openclaw").
+    """
+    __tablename__ = "user_integrations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    service_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    encrypted_url: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_token: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="integrations")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "service_name", name="uq_user_integration"),
     )
 
 

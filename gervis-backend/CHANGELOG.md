@@ -6,7 +6,154 @@ Entries are ordered newest-first within each phase.
 ---
 
 ## Phase 5 - Coding Mode and OpenClaw Integration
-> Status: **In Progress** — PRD workflow + mock coding job implemented
+> Status: **In Progress** — PRD workflow + real OpenClaw integration implemented
+
+---
+
+### [Phase 5.2] - Real OpenClaw integration + per-user encrypted credentials
+
+**New files:** `services/encryption_service.py`, `api/integrations.py`,
+`api/internal/openclaw_callback.py`,
+`migrations/versions/d4e1f8a2c5b9_user_integrations.py`
+
+**Modified files:** `db/models.py`, `config.py`, `main.py`,
+`tools/openclaw_coding_tool.py`, `api/internal/jobs.py`
+
+---
+
+#### `db/models.py` — `UserIntegration` model
+
+New ORM model storing Fernet-encrypted third-party credentials per user.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID PK | |
+| `user_id` | UUID FK → users | |
+| `service_name` | VARCHAR(64) | e.g. `"openclaw"` |
+| `encrypted_url` | Text | Fernet-encrypted base URL |
+| `encrypted_token` | Text | Fernet-encrypted hook token |
+| `created_at` / `updated_at` | DateTime(tz) | |
+
+Unique constraint: `(user_id, service_name)` — one credential set per service per user.
+`User` model gained a `integrations` backref relationship.
+
+---
+
+#### `services/encryption_service.py` — Fernet symmetric encryption
+
+Module-level singleton `_fernet` initialized from `INTEGRATION_ENCRYPTION_KEY` env var.
+
+- **Production:** set `INTEGRATION_ENCRYPTION_KEY` in Secret Manager. Generate with:
+  `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+- **Development:** if the key is not set, a random per-process key is generated with a loud
+  warning. Credentials will not survive a server restart in dev — intentional.
+
+Public API:
+- `encrypt(plaintext: str) -> str` — Fernet token (URL-safe base64)
+- `decrypt(token: str) -> str` — raises `InvalidToken` on tampering
+- `mask_url(url: str) -> str` — returns a truncated preview safe for list responses
+
+---
+
+#### `api/integrations.py` — `GET/POST/DELETE /integrations`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/integrations` | Upsert encrypted credentials for a service |
+| `GET` | `/integrations` | List configured integrations (masked URLs only) |
+| `DELETE` | `/integrations/{service}` | Remove credentials |
+
+`POST /integrations` body:
+```json
+{"service": "openclaw", "url": "https://your-machine.ts.net", "token": "hook-token"}
+```
+
+Response includes `"message": "Your credentials have been encrypted and stored securely."` —
+the Android app displays this to the user as the encryption confirmation.
+
+The `url` is shown in full only once (in the save response). All subsequent `GET` responses
+return a masked preview via `mask_url()`.
+
+Internal helper `get_decrypted_integration(user_id, service)` is used by the coding tool
+to retrieve plaintext credentials without going through the HTTP layer.
+
+Supported services validated at the API layer: `{"openclaw"}`.
+
+---
+
+#### `tools/openclaw_coding_tool.py` — real `POST /hooks/agent` call
+
+Replaced the 8-second mock with the real OpenClaw HTTP integration.
+
+Flow:
+1. Fetch user's OpenClaw credentials from DB via `get_decrypted_integration(user_id, "openclaw")`
+2. If not configured → raise `RuntimeError` with a message directing the user to Settings
+3. Build callback URL: `{BACKEND_BASE_URL}/internal/openclaw/callback/{job_id}`
+4. POST to `{url}/hooks/agent` with `Authorization: Bearer {token}` (30s timeout)
+5. Return `{"__async_pending": True, "display_summary": "Building..."}` immediately
+
+The `__async_pending` sentinel tells the job executor NOT to mark the job completed —
+OpenClaw will call back asynchronously when the build finishes.
+
+Message sent to OpenClaw instructs it to POST the result back in this shape:
+```json
+{"spoken_summary": "...", "display_summary": "...", "artifacts": [...]}
+```
+
+---
+
+#### `api/internal/openclaw_callback.py` — `POST /internal/openclaw/callback/{job_id}`
+
+Receives the async result from OpenClaw when the build completes.
+
+1. Validates `job_id` is a real UUID and corresponds to a job in `running`/`queued` state
+2. Updates job to `completed` with spoken/display summary and artifacts
+3. Sends `job_update: completed` control message to the phone
+4. Smart delivery: `inject_job_result()` if session is live → otherwise creates resume event + FCM
+
+Duplicate callbacks (same job already `completed`) are silently ignored (returns `{"status": "already_complete"}`).
+
+---
+
+#### `api/internal/jobs.py` — async-pending handling
+
+Added early-return path after `_execute_job_by_type`:
+```python
+if result.get("__async_pending"):
+    # job stays in "running" — callback handler will complete it
+    return {"status": "pending", "job_id": job_id}
+```
+
+Also updated the `coding` dispatch to pass `user_id`:
+```python
+return await execute_coding_job(job_id, conversation_id, user_id, payload)
+```
+
+---
+
+#### `config.py` + `main.py` — encryption key plumbing
+
+`config.py`: added `integration_encryption_key: str = ""` setting.
+
+`main.py` lifespan: copies `settings.integration_encryption_key` into
+`os.environ["INTEGRATION_ENCRYPTION_KEY"]` so `encryption_service.py` reads it
+consistently regardless of whether it was loaded from `.env` or Secret Manager.
+
+---
+
+#### Migration `d4e1f8a2c5b9` — `user_integrations` table
+
+Creates `user_integrations` with all columns, unique constraint, and index on `user_id`.
+Down revision: `b7e2d4f1c8a3` (Phase 5 PendingAction fields).
+
+**Secret Manager setup (run once):**
+```powershell
+# Generate key
+cd gervis-backend; uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Store in Secret Manager
+printf 'GENERATED_KEY' | gcloud secrets create INTEGRATION_ENCRYPTION_KEY --data-file=- --project=spectalk-488516
+```
 
 ---
 
@@ -180,13 +327,12 @@ Returns:
 
 ---
 
-#### `tools/openclaw_coding_tool.py` — coding job executor (mock)
+#### `tools/openclaw_coding_tool.py` — coding job executor (initial mock, replaced in Phase 5.2)
 
 `execute_coding_job(job_id, conversation_id, payload) -> dict`
 
-Current implementation: realistic mock — `asyncio.sleep(8)` then returns a GitHub repo URL
-derived from `prd["project_name"]`. Ready to be replaced with the real
-`POST {OPENCLAW_BASE_URL}/hooks/agent` call (see `docs/phase5-openclaw-integration.md`).
+Initial implementation: realistic mock — `asyncio.sleep(8)` then returns a GitHub repo URL
+derived from `prd["project_name"]`. Replaced in Phase 5.2 with the real OpenClaw integration.
 
 ---
 

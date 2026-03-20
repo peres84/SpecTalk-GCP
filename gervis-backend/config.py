@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     # Cloud Run service account email for OIDC token auth on Cloud Tasks callbacks
     cloud_run_service_account: str = ""
 
+    # Phase 5: User integration credentials (OpenClaw etc.) encrypted at rest.
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Store in Secret Manager as INTEGRATION_ENCRYPTION_KEY.
+    integration_encryption_key: str = ""
+
     # Opik (Comet ML) — optional agent observability. Set OPIK_API_KEY to enable.
     opik_api_key: str = ""
     opik_workspace: str = "javier-peres"
