@@ -184,6 +184,116 @@ async def list_turns(
     ]
 
 
+class ConfirmRequest(BaseModel):
+    confirmed: bool
+    change_request: Optional[str] = None
+
+
+@router.post("/{conversation_id}/confirm")
+async def confirm_prd(
+    conversation_id: str,
+    body: ConfirmRequest,
+    payload: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept or reject a pending PRD confirmation for a coding job.
+
+    Called by the Android app when the user taps Yes or No on the
+    awaiting_confirmation screen (out-of-voice path).
+
+    - confirmed=true  → create coding job, enqueue Cloud Tasks, set conversation to running_job
+    - confirmed=false → cancel the pending action, set conversation to idle
+    """
+    from sqlalchemy import update as sql_update
+    from services.job_service import create_job, enqueue_cloud_task
+    from services.conversation_service import set_conversation_state
+    from services.control_channels import send_control_message
+
+    user_id = uuid.UUID(payload["sub"])
+    try:
+        conv_id = uuid.UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    # Verify ownership
+    result = await db.execute(
+        select(Conversation.id).where(
+            Conversation.id == conv_id,
+            Conversation.user_id == user_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    # Fetch the most recent pending PRD action
+    result = await db.execute(
+        select(PendingAction)
+        .where(
+            PendingAction.conversation_id == conv_id,
+            PendingAction.action_type == "confirm_prd",
+            PendingAction.status == "pending",
+        )
+        .order_by(PendingAction.created_at.desc())
+        .limit(1)
+    )
+    pending_action = result.scalar_one_or_none()
+    if pending_action is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No pending PRD confirmation found for this conversation",
+        )
+
+    if body.confirmed:
+        # Extract PRD from the pending action payload
+        prd = (pending_action.payload or {}).get("prd", {})
+        project_name = prd.get("project_name", "your project")
+
+        # Create job row
+        job = await create_job(conversation_id=conversation_id, job_type="coding")
+        job_id = str(job.id)
+        job_user_id = str(job.user_id)
+
+        # Enqueue to Cloud Tasks
+        await enqueue_cloud_task(
+            job_id=job_id,
+            job_type="coding",
+            conversation_id=conversation_id,
+            user_id=job_user_id,
+            payload={"prd": prd},
+        )
+
+        # Resolve the pending action
+        pending_action.status = "resolved"
+        await db.commit()
+
+        # Set conversation state and notify phone if WebSocket is open
+        await set_conversation_state(conversation_id, "running_job")
+        await send_control_message(conversation_id, {
+            "type": "state_update",
+            "state": "running_job",
+        })
+        await send_control_message(conversation_id, {
+            "type": "job_started",
+            "job_id": job_id,
+            "description": f"Building {project_name}",
+        })
+
+        return {"status": "ok", "job_id": job_id}
+
+    else:
+        # User declined — cancel the pending action and reset state
+        pending_action.status = "cancelled"
+        await db.commit()
+
+        await set_conversation_state(conversation_id, "idle")
+        await send_control_message(conversation_id, {
+            "type": "state_update",
+            "state": "idle",
+        })
+
+        return {"status": "ok"}
+
+
 @router.post("/{conversation_id}/ack-resume-event", status_code=status.HTTP_204_NO_CONTENT)
 async def ack_resume_event(
     conversation_id: str,

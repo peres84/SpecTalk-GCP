@@ -14,7 +14,7 @@ def _build_run_config():
     """Build the RunConfig for a native-audio Gemini Live session.
 
     Only uses fields available in google-adk 1.1.1:
-      streaming_mode, response_modalities, input_audio_transcription,
+      streaming_mode, input_audio_transcription,
       output_audio_transcription, speech_config, max_llm_calls.
 
     Fields added in later ADK versions (session_resumption, realtime_input_config)
@@ -24,9 +24,13 @@ def _build_run_config():
 
     supported = set(RunConfig.model_fields.keys())
 
+    # Do NOT set response_modalities — the native-audio model defaults to audio
+    # output and the Pydantic field expects a Modality enum instance. Passing a
+    # string literal triggers "Expected `enum` but got `str`" warnings, and
+    # passing types.Modality.AUDIO causes issues in some ADK versions. Omitting
+    # it entirely is both correct and warning-free.
     kwargs: dict = dict(
         streaming_mode="bidi",
-        response_modalities=[types.Modality.AUDIO],
         input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
     )

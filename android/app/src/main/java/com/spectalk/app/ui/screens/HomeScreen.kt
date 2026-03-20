@@ -358,7 +358,7 @@ private fun stateColor(state: String) = when (state) {
 private fun stateLabel(state: String) = when (state) {
     "active"                -> "Active"
     "awaiting_resume"       -> "Resume"
-    "awaiting_confirmation" -> "Confirm"
+    "awaiting_confirmation" -> "Review"
     "running_job"           -> "Working"
     "idle"                  -> "Idle"
     else                    -> state.replaceFirstChar { it.uppercase() }

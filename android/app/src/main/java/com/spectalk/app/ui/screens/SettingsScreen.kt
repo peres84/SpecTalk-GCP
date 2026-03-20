@@ -68,6 +68,9 @@ fun SettingsScreen(
     var locationSharingEnabled by remember {
         mutableStateOf(AppPreferences.isLocationSharingEnabled(context))
     }
+    var autoOpenOnNotification by remember {
+        mutableStateOf(AppPreferences.isAutoOpenOnNotification(context))
+    }
     var locationSummary by remember { mutableStateOf<String?>(null) }
     var locationBusy by remember { mutableStateOf(false) }
 
@@ -206,6 +209,25 @@ fun SettingsScreen(
                 },
                 onRefreshLocation = ::refreshLocation,
             )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "Notifications",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            SettingsToggleRow(
+                title = "Auto-open on job complete",
+                subtitle = "When a background job finishes, automatically open the conversation " +
+                    "and have Gervis speak the result — no tap needed.",
+                checked = autoOpenOnNotification,
+                onCheckedChange = { enabled ->
+                    autoOpenOnNotification = enabled
+                    AppPreferences.setAutoOpenOnNotification(context, enabled)
+                },
+            )
         }
     }
 }
@@ -341,6 +363,40 @@ private fun LocationSettingsSection(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
     }
 }
 

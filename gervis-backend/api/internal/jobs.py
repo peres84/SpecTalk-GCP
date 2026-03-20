@@ -231,20 +231,46 @@ async def _execute_job_by_type(
     Phase 4: mock implementations only. Phase 5+ will add real dispatchers
     per job_type (OpenClaw, research pipelines, etc.).
     """
-    if job_type in ("mock", "demo"):
-        # Simulate a short job for testing
-        await asyncio.sleep(2)
+    if job_type == "demo":
+        # Very short smoke-test job — only use "demo" for curl testing
+        await asyncio.sleep(3)
         return {
             "spoken_summary": "Your demo job has completed successfully.",
             "display_summary": "Demo job completed.",
         }
 
-    # Unknown job type — return a generic result (Phase 5+ will handle real types)
+    if job_type == "mock":
+        await asyncio.sleep(3)
+        return {
+            "spoken_summary": "Your mock job has completed.",
+            "display_summary": "Mock job completed.",
+        }
+
+    if job_type == "research":
+        # Simulate a realistic research pipeline — long enough that the
+        # spoken_ack ("I'm on it!") finishes playing before inject_job_result
+        # fires. 1-second mocks caused double-audio overlap.
+        await asyncio.sleep(20)
+        description = payload.get("description", "your research topic")
+        return {
+            "spoken_summary": (
+                f"I finished researching {description}. "
+                "I found several relevant sources and compiled a summary. "
+                "Ready to walk you through the key findings whenever you're back."
+            ),
+            "display_summary": f"Research complete: {description}",
+        }
+
+    if job_type == "coding":
+        from tools.openclaw_coding_tool import execute_coding_job
+        return await execute_coding_job(job_id, conversation_id, payload)
+
+    # Unknown job type — return a generic result
     logger.warning(
         f"[{conversation_id}] Unknown job type '{job_type}' — returning mock result"
     )
-    await asyncio.sleep(1)
+    await asyncio.sleep(15)
     return {
-        "spoken_summary": f"Your {job_type} job has been processed.",
+        "spoken_summary": f"Your {job_type} job has been completed.",
         "display_summary": f"{job_type.capitalize()} completed.",
     }

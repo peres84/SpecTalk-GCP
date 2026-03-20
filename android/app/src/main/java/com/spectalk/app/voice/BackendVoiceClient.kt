@@ -21,7 +21,11 @@ sealed interface VoiceClientEvent {
     data class InputTranscript(val text: String) : VoiceClientEvent
     data class OutputTranscript(val text: String) : VoiceClientEvent
     data object Interrupted : VoiceClientEvent
-    data class StateUpdate(val state: String) : VoiceClientEvent
+    /**
+     * Backend conversation state changed.
+     * For "awaiting_confirmation", [prdSummary] carries the project spec to display.
+     */
+    data class StateUpdate(val state: String, val prdSummary: PrdSummary? = null) : VoiceClientEvent
     data class JobStarted(val jobId: String, val description: String) : VoiceClientEvent
     data class JobUpdate(val jobId: String, val status: String, val message: String) : VoiceClientEvent
     /** Backend is requesting the device's current location (e.g. for the Maps tool). */
@@ -164,7 +168,12 @@ class BackendVoiceClient(
             }
             "state_update" -> {
                 val state = json.optString("state")
-                if (state.isNotBlank()) _events.tryEmit(VoiceClientEvent.StateUpdate(state))
+                if (state.isNotBlank()) {
+                    val prdSummary = if (state == "awaiting_confirmation") {
+                        json.optJSONObject("prd_summary")?.let { PrdSummary.fromJson(it) }
+                    } else null
+                    _events.tryEmit(VoiceClientEvent.StateUpdate(state, prdSummary))
+                }
             }
             "job_started" -> {
                 val jobId = json.optString("job_id")

@@ -105,6 +105,32 @@ class ConversationRepository(private val http: OkHttpClient = defaultClient) {
         }
 
     /**
+     * Submit a PRD confirmation or change request.
+     * POST /conversations/{conversationId}/confirm
+     *   Body: {"confirmed": true}
+     *      or {"confirmed": false, "change_request": "make it mobile"}
+     * Returns true on 2xx, false on any error or non-2xx (including 404 = no pending PRD).
+     */
+    suspend fun confirmPrd(
+        jwt: String,
+        conversationId: String,
+        confirmed: Boolean,
+        changeRequest: String?,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val bodyJson = JSONObject().apply {
+            put("confirmed", confirmed)
+            if (!changeRequest.isNullOrBlank()) put("change_request", changeRequest)
+        }
+        val body = bodyJson.toString().toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url("${BackendConfig.baseUrl}/conversations/$conversationId/confirm")
+            .post(body)
+            .header("Authorization", "Bearer $jwt")
+            .build()
+        runCatching { http.newCall(request).execute().code in 200..299 }.getOrDefault(false)
+    }
+
+    /**
      * Fetch turn history for a conversation, oldest-first (natural chat order).
      * Returns an empty list on any error so callers can proceed without history.
      */

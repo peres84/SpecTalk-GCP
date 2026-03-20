@@ -1,11 +1,14 @@
 package com.spectalk.app.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -48,11 +51,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.spectalk.app.ui.components.PrdConfirmationCard
 import com.spectalk.app.voice.ConversationTurn
 import com.spectalk.app.voice.VoiceAgentViewModel
 import com.spectalk.app.voice.VoiceSessionUiState
@@ -110,51 +115,108 @@ fun VoiceSessionScreen(
             }
         },
     ) { padding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            // Compact status row: small orb + status label + optional job description
-            CompactStatusRow(
-                uiState = uiState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp),
-            )
+            // ── Main content column ──────────────────────────────────────────
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Compact status row: small orb + status label + mode subtitle
+                CompactStatusRow(
+                    uiState = uiState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                )
 
-            HorizontalDivider(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-            )
+                HorizontalDivider(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                )
 
-            // Transcript area — scrollable, fills remaining space
-            TranscriptArea(
-                uiState = uiState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-            )
+                // Transcript area — scrollable, fills remaining space
+                TranscriptArea(
+                    uiState = uiState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                )
 
-            // End Session button
-            Button(
-                onClick = {
-                    viewModel.disconnect()
-                    onNavigateBack()
-                },
+                // End Session button
+                Button(
+                    onClick = {
+                        viewModel.disconnect()
+                        onNavigateBack()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .navigationBarsPadding()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("End Session", fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            // ── PRD confirmation card overlay ───────────────────────────────
+            // Slides up from bottom when awaiting_confirmation state is active.
+            // Remains until the state changes (voice or button confirmation).
+            AnimatedVisibility(
+                visible = uiState.prdSummary != null,
+                enter = slideInVertically(initialOffsetY = { it }),
+                exit = slideOutVertically(targetOffsetY = { it }),
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .navigationBarsPadding()
-                    .height(52.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
-                    contentColor = MaterialTheme.colorScheme.error,
-                ),
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding(),
             ) {
-                Text("End Session", fontWeight = FontWeight.SemiBold)
+                val prd = uiState.prdSummary
+                val convId = uiState.conversationId
+                if (prd != null && convId != null) {
+                    PrdConfirmationCard(
+                        prdSummary = prd,
+                        onBuildIt = {
+                            viewModel.confirmPrd(convId, confirmed = true, changeRequest = null)
+                        },
+                        onChangeSomething = { changeRequest ->
+                            viewModel.confirmPrd(convId, confirmed = false, changeRequest = changeRequest)
+                        },
+                    )
+                }
+            }
+
+            // ── Fallback: PRD state set but no prd_summary (app was killed) ─
+            // The prd_summary is stored in SharedPreferences, so this scenario
+            // only occurs if the app was killed before the state_update arrived.
+            val showFallback = uiState.conversationState == "awaiting_confirmation"
+                && uiState.prdSummary == null
+                && !uiState.isConnecting
+                && !uiState.isConnected
+            if (showFallback) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Your project plan is ready. Tap + and say \"Hey Gervis\" to review it by voice.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
     }
@@ -210,6 +272,15 @@ private fun CompactStatusRow(uiState: VoiceSessionUiState, modifier: Modifier = 
                 color = orbColor,
                 fontWeight = FontWeight.SemiBold,
             )
+            // coding_mode subtitle: Gervis is actively shaping the PRD via questions
+            if (uiState.conversationState == "coding_mode") {
+                Text(
+                    text = "Gervis is designing your project…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f),
+                    fontStyle = FontStyle.Italic,
+                )
+            }
             val jobDescription = uiState.activeJobDescription
             if (jobDescription.isNotBlank()) {
                 Text(
