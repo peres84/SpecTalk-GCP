@@ -10,6 +10,63 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.8] - Deprecated model, Pydantic warning, session timeout handling
+
+**Modified files:** `agents/team_code_pr_designers/designer_agent.py`, `services/gemini_live_client.py`, `ws/voice_handler.py`
+
+All three issues were diagnosed from Cloud Run logs.
+
+#### `designer_agent.py` — update PRD model from `gemini-2.0-flash-001` to `gemini-2.5-flash`
+
+`gemini-2.0-flash-001` was removed by Google in March 2026. Every PRD generation call was
+returning 404 NOT_FOUND and silently falling back to a generic placeholder PRD — meaning every
+coding project was getting the same boilerplate spec instead of a real AI-generated one. The
+fallback recovery in `generate_prd()` was working correctly (no crash), which is why this went
+unnoticed. Updated `_PRD_MODEL` to `gemini-2.5-flash`.
+
+#### `services/gemini_live_client.py` — fix Pydantic serializer warning on every WebSocket connect
+
+Every session open was logging:
+```
+UserWarning: Pydantic serializer warnings:
+  Expected `enum` but got `str` with value `'AUDIO'` - serialized value may not be as expected
+```
+
+Root cause: `types.Modality.AUDIO` raised `AttributeError` in the installed ADK version, so
+the fallback `["AUDIO"]` string was used. RunConfig's `response_modalities` field expects the
+enum, not a string — Pydantic coerces it but warns.
+
+Fix: extracted `_resolve_audio_modality(RunConfig)` helper that tries:
+1. `google.genai.types.Modality.AUDIO` (preferred, current SDK layout)
+2. The enum type extracted from RunConfig's own field annotation `__args__`
+3. String `"AUDIO"` as last resort (still produces the warning, but won't crash)
+
+#### `ws/voice_handler.py` — detect 1011 session timeout, send `session_timeout` message type
+
+Logs showed every Gemini Live session dying with a 1011 error at exactly the 10-minute mark:
+```
+Gemini Live session error: 1011 None. Failed to run inference for model: go/debugonly
+Gemini Live session error: 1011 None. Thread was cancelled when writing StartStep status
+```
+
+This is the Gemini Live preview audio model's documented session duration limit (~10 min),
+not a backend bug. Previously the error hit the generic `except Exception` handler and was
+sent to the phone as `{"type": "error"}` — Android treated it as a crash.
+
+Fix: added a 1011 + keyword check (`"Failed to run inference"`, `"Thread was cancelled"`)
+to classify the error as a session timeout and send:
+```json
+{"type": "session_timeout", "message": "Voice session reached its time limit. Tap to start a new session."}
+```
+
+Logged at `WARNING` level (not `ERROR`) since this is expected API behaviour.
+
+**Android action required**: handle `type == "session_timeout"` in `VoiceAgentViewModel` —
+stop audio, close WebSocket, resume `HotwordService`, show a non-error idle UI state
+("Session ended. Say 'Hey Gervis' to continue."). Do NOT auto-reconnect.
+
+---
+
 ### [Phase 5.7] - Turn merging fix + job creation fix + Opik completeness
 
 **Modified files:** `ws/voice_handler.py`, `agents/orchestrator.py`, `tools/coding_tools.py`, `tools/notification_resume_tool.py`
