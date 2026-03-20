@@ -10,6 +10,41 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
+def _resolve_audio_modality(RunConfig):
+    """Return the correct AUDIO enum value for RunConfig.response_modalities.
+
+    Tries known locations for the Modality enum across ADK/genai SDK versions.
+    Falls back to the string "AUDIO" only if the enum cannot be found, which
+    produces a Pydantic serializer warning but still works functionally.
+    """
+    # Attempt 1: google.genai.types.Modality (preferred, most recent SDK layout)
+    try:
+        from google.genai import types as genai_types
+        return genai_types.Modality.AUDIO
+    except AttributeError:
+        pass
+
+    # Attempt 2: resolve from the RunConfig field's annotation args
+    try:
+        import typing, get_annotations  # noqa: F401
+    except ImportError:
+        pass
+    try:
+        hints = RunConfig.model_fields.get("response_modalities")
+        if hints:
+            origin = getattr(hints.annotation, "__args__", None)
+            if origin:
+                for arg in origin:
+                    member = getattr(arg, "AUDIO", None)
+                    if member is not None:
+                        return member
+    except Exception:
+        pass
+
+    # Fallback: string — triggers a Pydantic warning but works
+    return "AUDIO"
+
+
 def _build_run_config():
     """Build the RunConfig for a native-audio Gemini Live session.
 
@@ -33,11 +68,13 @@ def _build_run_config():
     # Explicitly set AUDIO response modality — required by the native-audio
     # model. Without this the Gemini Live API rejects the connection with
     # "Cannot extract voices from a non-audio request" (error 1007).
+    #
+    # Pydantic warns if we pass the string "AUDIO" instead of the enum.
+    # Resolve the Modality enum from RunConfig's own field annotation so we
+    # always pass the right type regardless of where the SDK puts the enum.
     if "response_modalities" in supported:
-        try:
-            kwargs["response_modalities"] = [types.Modality.AUDIO]
-        except AttributeError:
-            kwargs["response_modalities"] = ["AUDIO"]
+        modality_audio = _resolve_audio_modality(RunConfig)
+        kwargs["response_modalities"] = [modality_audio]
 
     if "session_resumption" in supported:
         kwargs["session_resumption"] = types.SessionResumptionConfig(transparent=True)

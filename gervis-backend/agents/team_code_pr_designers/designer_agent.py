@@ -16,8 +16,8 @@ import re
 logger = logging.getLogger(__name__)
 
 # Text model for PRD generation (not the audio preview model used for voice).
-# Use the versioned ID — the alias "gemini-2.0-flash" was removed by Google.
-_PRD_MODEL = "gemini-2.0-flash-001"
+# gemini-2.0-flash-001 was deprecated Mar 2026 — use gemini-2.5-flash instead.
+_PRD_MODEL = "gemini-2.5-flash"
 
 
 def _build_prd_prompt(project_idea: str, clarifications: dict) -> str:

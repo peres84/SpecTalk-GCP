@@ -228,11 +228,33 @@ async def _downstream_task(
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        logger.error(f"[{conversation_id}] Gemini Live session error: {e}", exc_info=True)
-        try:
-            await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
-        except Exception:
-            pass
+        error_str = str(e)
+        # 1011 errors from Gemini Live after ~10 min are session timeouts —
+        # the preview audio model has a maximum session duration. Send a
+        # specific message type so the Android app can reconnect gracefully
+        # instead of showing a generic error screen.
+        is_session_timeout = "1011" in error_str and (
+            "Failed to run inference" in error_str
+            or "Thread was cancelled" in error_str
+            or "session" in error_str.lower()
+        )
+        if is_session_timeout:
+            logger.warning(
+                f"[{conversation_id}] Gemini Live session timed out (10-min limit for preview model)"
+            )
+            try:
+                await websocket.send_text(json.dumps({
+                    "type": "session_timeout",
+                    "message": "Voice session reached its time limit. Tap to start a new session.",
+                }))
+            except Exception:
+                pass
+        else:
+            logger.error(f"[{conversation_id}] Gemini Live session error: {e}", exc_info=True)
+            try:
+                await websocket.send_text(json.dumps({"type": "error", "message": error_str}))
+            except Exception:
+                pass
     finally:
         # Flush any remaining buffered text so the last turn isn't lost
         await _flush_turn_buffer(conversation_id)
