@@ -50,6 +50,16 @@ fun SpecTalkNavGraph() {
     fun openDrawer() = scope.launch { drawerState.open() }
     fun closeDrawer() = scope.launch { drawerState.close() }
 
+    LaunchedEffect(Unit) {
+        drawerState.close()
+    }
+
+    LaunchedEffect(showDrawer) {
+        if (!showDrawer && drawerState.isOpen) {
+            drawerState.close()
+        }
+    }
+
     // Consume pending auto-open (background-killed case)
     LaunchedEffect(Unit) {
         AppPreferences.getPendingAutoOpenConversationId(context)?.let { id ->

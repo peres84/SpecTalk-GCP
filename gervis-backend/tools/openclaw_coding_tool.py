@@ -1,17 +1,16 @@
-"""OpenClaw coding job executor — OpenResponses API (POST /v1/responses, SSE).
+"""OpenClaw coding job executor using POST /v1/responses with SSE streaming.
 
 Flow:
-  1. Fetch user's OpenClaw credentials from DB (decrypted in-process)
-  2. Look up the last OpenClaw response_id for this conversation (for context chaining)
-  3. POST the PRD to POST /v1/responses with stream=True
-     - If a previous_response_id exists, pass it so OpenClaw remembers prior context
-  4. Consume SSE stream, collecting response.output_text.delta events
+  1. Fetch the user's OpenClaw credentials from DB
+  2. Look up prior OpenClaw context for this project, when available
+  3. POST the PRD to /v1/responses with stream=True
+  4. Consume SSE stream and collect response.output_text.delta events
   5. Capture the response_id from response.completed and persist it on the job row
   6. Return assembled result when streaming ends
 
 Context chaining: each completed job stores its OpenClaw response_id in job.artifacts.
-The next coding job for the same conversation looks up the most recent response_id and
-passes it as previous_response_id, giving OpenClaw full context of prior work.
+The next coding job for the same project can pass that value as previous_response_id
+so OpenClaw keeps the existing coding context.
 """
 
 import json
@@ -24,26 +23,19 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-# Total time budget for a coding job (OpenClaw may take several minutes)
 _OPENCLAW_TIMEOUT = 1800  # 30 minutes
 
 
 async def _get_last_response_id(conversation_id: str, user_id: str, project_name: str) -> str | None:
-    """Return the most recent OpenClaw response_id for this project.
-
-    Checks UserProject first (cross-session), then falls back to job artifacts
-    (same-session, for backward compatibility).
-    """
+    """Return the most recent OpenClaw response_id for this project."""
     from services.project_service import find_user_project
 
-    # Cross-session: UserProject stores the last response_id per project name
     if user_id and project_name:
         project = await find_user_project(user_id, project_name)
         if project and project.last_openclaw_response_id:
             return project.last_openclaw_response_id
 
-    # Same-session fallback: look at job artifacts
-    from sqlalchemy import select, desc
+    from sqlalchemy import desc, select
     from db.database import AsyncSessionLocal
     from db.models import Job
     import uuid
@@ -77,18 +69,7 @@ async def execute_coding_job(
     user_id: str,
     payload: dict,
 ) -> dict:
-    """Send a PRD to OpenClaw and stream the result back.
-
-    Args:
-        job_id: The Job row UUID (string). Used as deterministic session key.
-        conversation_id: The Conversation row UUID (string).
-        user_id: The User row UUID (string). Used to look up OpenClaw credentials.
-        payload: Dict containing "prd" key with the PRD dict from generate_prd().
-
-    Returns:
-        Dict with spoken_summary, display_summary, and optional artifacts.
-    """
-    # Link this Opik trace to the conversation thread
+    """Send a PRD to OpenClaw and stream the result back."""
     try:
         opik.update_current_trace(thread_id=conversation_id)
     except Exception:
@@ -97,9 +78,13 @@ async def execute_coding_job(
     from api.integrations import get_decrypted_integration
 
     prd = payload.get("prd", {})
-    project_name = prd.get("project_name", "your project")
+    existing_project = payload.get("existing_project") or {}
+    existing_project_name = existing_project.get("project_name")
+    existing_project_path = existing_project.get("path")
+    existing_project_url = existing_project.get("url")
+    existing_response_id = existing_project.get("last_openclaw_response_id")
+    project_name = existing_project_name or prd.get("project_name", "your project")
 
-    # ── 1. Fetch user's OpenClaw credentials ─────────────────────────────────
     credentials = await get_decrypted_integration(user_id, "openclaw")
     if credentials is None:
         raise RuntimeError(
@@ -109,30 +94,56 @@ async def execute_coding_job(
 
     openclaw_url, openclaw_token = credentials
     endpoint = f"{openclaw_url.rstrip('/')}/v1/responses"
-    session_key = f"spectalk-{conversation_id}"  # per-conversation, not per-job
+    session_key = f"spectalk-{conversation_id}"
 
-    # ── 2. Look up prior context ──────────────────────────────────────────────
-    previous_response_id = await _get_last_response_id(conversation_id, user_id, project_name)
+    previous_response_id = existing_response_id or await _get_last_response_id(
+        conversation_id,
+        user_id,
+        project_name,
+    )
     if previous_response_id:
         logger.info(
             f"[{conversation_id}] Chaining from previous OpenClaw response: {previous_response_id}"
         )
 
     prd_json = json.dumps(prd, indent=2)
-    prompt = (
-        f"Build the following project according to this PRD.\n\n"
-        f"PRD:\n{prd_json}\n\n"
-        f"IMPORTANT — when the build is complete, do the following:\n"
-        f"1. Create the project inside '{settings.openclaw_projects_dir}/<project_slug>/' (use snake_case for the folder name, e.g. lang_drill for 'LangDrill').\n"
-        f"   Create the parent directory if it does not exist.\n"
-        f"2. Deploy it using nginx so it is accessible over HTTP.\n"
-        f"3. Reply with ONLY these two lines (no extra explanation):\n"
-        f"   PATH: <exact absolute path to the project folder>\n"
-        f"   URL: <http URL where the project is accessible>\n"
-        f"   If nginx deployment failed, omit the URL line and only include PATH."
-    )
+    if existing_project_path:
+        prompt = (
+            f"Update the existing project according to this PRD.\n\n"
+            f"Existing project name: {project_name}\n"
+            f"Existing project path: {existing_project_path}\n"
+            f"Existing project URL: {existing_project_url or 'unknown'}\n\n"
+            f"PRD:\n{prd_json}\n\n"
+            f"IMPORTANT: this is an edit to an existing project.\n"
+            f"1. Reuse the exact existing project folder at '{existing_project_path}'.\n"
+            f"2. Do NOT create a new project directory or a new slugged folder.\n"
+            f"3. Apply the requested changes inside the existing workspace.\n"
+            f"4. Inside that project folder, run 'npm install' first.\n"
+            f"5. Then run the app with 'npm run dev -- --host 0.0.0.0 --port 5173'.\n"
+            f"6. If port 5173 is already in use, choose another available port and use that instead.\n"
+            f"7. Reply with ONLY these two lines (no extra explanation):\n"
+            f"   PATH: <exact absolute path to the project folder>\n"
+            f"   URL: <exact URL where the running app is reachable>\n"
+            f"   If the app is still using the same URL, return the current URL.\n"
+            f"   If deployment failed, omit the URL line and only include PATH."
+        )
+    else:
+        prompt = (
+            f"Build the following project according to this PRD.\n\n"
+            f"PRD:\n{prd_json}\n\n"
+            f"IMPORTANT: when the build is complete, do the following:\n"
+            f"1. Create the project inside '{settings.openclaw_projects_dir}/<project_slug>/' "
+            f"(use snake_case for the folder name, e.g. lang_drill for 'LangDrill').\n"
+            f"   Create the parent directory if it does not exist.\n"
+            f"2. Inside the project folder, run 'npm install' first.\n"
+            f"3. Then run the app with 'npm run dev -- --host 0.0.0.0 --port 5173'.\n"
+            f"4. If port 5173 is already in use, choose another available port and use that instead.\n"
+            f"5. Reply with ONLY these two lines (no extra explanation):\n"
+            f"   PATH: <exact absolute path to the project folder>\n"
+            f"   URL: <exact URL where the running app is reachable>\n"
+            f"   If nginx deployment failed, omit the URL line and only include PATH."
+        )
 
-    # ── 3. Build request body ─────────────────────────────────────────────────
     request_body: dict = {
         "model": "openclaw",
         "input": prompt,
@@ -144,10 +155,10 @@ async def execute_coding_job(
     logger.info(
         f"[{conversation_id}] Sending coding job {job_id} to OpenClaw "
         f"(project='{project_name}', session_key={session_key}, "
-        f"chained={previous_response_id is not None})"
+        f"chained={previous_response_id is not None}, "
+        f"existing_path={existing_project_path!r})"
     )
 
-    # ── 4. Stream POST /v1/responses ──────────────────────────────────────────
     full_text = ""
     openclaw_response_id = None
 
@@ -180,10 +191,8 @@ async def execute_coding_job(
 
                 if event_type == "response.output_text.delta":
                     full_text += event.get("delta", "")
-
                 elif event_type == "response.completed":
                     openclaw_response_id = event.get("response", {}).get("id")
-
                 elif event_type == "error":
                     error_msg = event.get("message", "Unknown OpenClaw error")
                     raise RuntimeError(f"OpenClaw error: {error_msg}")
@@ -193,10 +202,8 @@ async def execute_coding_job(
         f"({len(full_text)} chars, response_id={openclaw_response_id})"
     )
 
-    # ── 5. Parse PATH and URL from response ───────────────────────────────────
-    project_path = None
-    project_url = None
-
+    project_path = existing_project_path
+    project_url = existing_project_url
     for line in full_text.splitlines():
         line = line.strip()
         if line.startswith("PATH:"):
@@ -205,15 +212,19 @@ async def execute_coding_job(
             project_url = line[4:].strip()
 
     logger.info(
-        f"[{conversation_id}] OpenClaw job {job_id} — "
+        f"[{conversation_id}] OpenClaw job {job_id} result "
         f"path={project_path} url={project_url}"
     )
 
-    # ── 6. Build result ───────────────────────────────────────────────────────
     artifacts = []
     if openclaw_response_id:
-        # Store response_id so the next job can chain from it
-        artifacts.append({"type": "openclaw_response_id", "url": openclaw_response_id, "label": "OpenClaw response ID"})
+        artifacts.append(
+            {
+                "type": "openclaw_response_id",
+                "url": openclaw_response_id,
+                "label": "OpenClaw response ID",
+            }
+        )
     if project_url:
         artifacts.append({"type": "url", "url": project_url, "label": f"{project_name} (live)"})
     if project_path:
@@ -221,17 +232,17 @@ async def execute_coding_job(
 
     if project_url:
         spoken = f"Your {project_name} project is ready and live at {project_url}"
-        display = f"{project_name} deployed — {project_url}"
+        display = f"{project_name} deployed - {project_url}"
     elif project_path:
         spoken = f"Your {project_name} project has been built. The files are at {project_path}"
-        display = f"{project_name} built — {project_path}"
+        display = f"{project_name} built - {project_path}"
     else:
         spoken = f"Your {project_name} project has been built by OpenClaw."
         display = f"OpenClaw finished building {project_name}."
 
-    # Persist project metadata to UserProject for cross-session memory
     try:
         from services.project_service import upsert_user_project
+
         await upsert_user_project(
             user_id=user_id,
             project_name=project_name,

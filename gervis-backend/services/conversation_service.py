@@ -32,7 +32,7 @@ async def persist_turn(
 
 
 async def set_conversation_active(conversation_id: str) -> None:
-    """Mark a conversation as active when a voice session starts."""
+    """Mark a conversation as active and clear any stale active siblings."""
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -42,6 +42,15 @@ async def set_conversation_active(conversation_id: str) -> None:
             )
             conv = result.scalar_one_or_none()
             if conv:
+                sibling_result = await session.execute(
+                    select(Conversation).where(
+                        Conversation.user_id == conv.user_id,
+                        Conversation.id != conv.id,
+                        Conversation.state == "active",
+                    )
+                )
+                for sibling in sibling_result.scalars():
+                    sibling.state = "idle"
                 conv.state = "active"
                 await session.commit()
     except Exception as e:

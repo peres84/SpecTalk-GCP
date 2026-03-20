@@ -46,17 +46,14 @@ async def send_push_notification(
             notification_data.update(data)
         if conversation_id:
             notification_data["conversation_id"] = conversation_id
+        notification_data["title"] = title
+        notification_data["body"] = body
 
         message = messaging.Message(
-            notification=messaging.Notification(title=title, body=body),
-            data=notification_data if notification_data else None,
+            data=notification_data,
             token=push_token,
             android=messaging.AndroidConfig(
                 priority="high",
-                notification=messaging.AndroidNotification(
-                    channel_id="spectalk_jobs",
-                    priority="high",
-                ),
             ),
         )
 

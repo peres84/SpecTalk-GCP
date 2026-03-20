@@ -76,6 +76,12 @@ async def lookup_project(
     project = await find_user_project(user_id, project_name)
 
     if project:
+        state["selected_project"] = {
+            "project_name": project.project_name,
+            "path": project.path,
+            "url": project.url,
+            "last_openclaw_response_id": project.last_openclaw_response_id,
+        }
         logger.info(f"lookup_project: found '{project.project_name}' for user {user_id}")
         return {
             "found": True,
@@ -85,6 +91,7 @@ async def lookup_project(
             "has_openclaw_context": project.last_openclaw_response_id is not None,
         }
     else:
+        state.pop("selected_project", None)
         all_projects = await list_user_projects(user_id)
         names = [p.project_name for p in all_projects]
         logger.info(f"lookup_project: '{project_name}' not found for user {user_id}. Existing: {names}")

@@ -127,6 +127,7 @@ async def generate_and_confirm_prd(
 
     # Store in ADK session state so confirm_and_dispatch can retrieve it
     state["pending_prd"] = prd
+    existing_project = state.get("selected_project")
 
     # Build a natural spoken summary
     features_spoken = ", ".join(prd.get("key_features", [])[:3])
@@ -155,7 +156,10 @@ async def generate_and_confirm_prd(
                 action = PendingAction(
                     conversation_id=uuid.UUID(conversation_id),
                     action_type="confirm_prd",
-                    payload={"prd": prd},
+                    payload={
+                        "prd": prd,
+                        "existing_project": existing_project,
+                    },
                     status="pending",
                     description=f"Build project: {prd.get('project_name', 'unknown')}",
                     confirmation_prompt=spoken_summary,
@@ -240,6 +244,7 @@ async def confirm_and_dispatch(
 
     if confirmed:
         prd = state.get("pending_prd", {})
+        existing_project = state.get("selected_project")
         project_name = prd.get("project_name", "your project")
 
         # Update PendingAction to resolved
@@ -283,7 +288,10 @@ async def confirm_and_dispatch(
                     job_type="coding",
                     conversation_id=conversation_id,
                     user_id=user_id,
-                    payload={"prd": prd},
+                    payload={
+                        "prd": prd,
+                        "existing_project": existing_project,
+                    },
                 )
             )
 

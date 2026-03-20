@@ -7,6 +7,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
@@ -45,11 +47,14 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -58,10 +63,13 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.spectalk.app.auth.AuthUiState
 import com.spectalk.app.auth.AuthViewModel
 import com.spectalk.app.conversations.ConversationItem
 import com.spectalk.app.conversations.HomeViewModel
+import com.spectalk.app.device.ConnectedDeviceMonitor
 import com.spectalk.app.hotword.HotwordEventBus
 import com.spectalk.app.hotword.HotwordService
 import java.time.Instant
@@ -79,7 +87,9 @@ fun HomeScreen(
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     val homeState by homeViewModel.uiState.collectAsStateWithLifecycle()
+    val deviceState by ConnectedDeviceMonitor.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -111,6 +121,16 @@ fun HomeScreen(
         HotwordEventBus.wakeWordDetected.collect { onNavigateToVoiceSession(null) }
     }
 
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                homeViewModel.loadConversations()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -140,17 +160,17 @@ fun HomeScreen(
             ExtendedFloatingActionButton(
                 onClick = { onNavigateToVoiceSession(null) },
                 modifier = Modifier
-                    .padding(bottom = 16.dp)
-                    .height(56.dp),
+                    .padding(bottom = 18.dp)
+                    .height(58.dp),
                 shape = RoundedCornerShape(28.dp),
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
-                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp),
+                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 8.dp),
                 icon = {
                     Icon(Icons.Rounded.Mic, contentDescription = null, modifier = Modifier.size(20.dp))
                 },
                 text = {
-                    Text("Start talking", style = MaterialTheme.typography.labelLarge)
+                    Text("Talk to Gervis", style = MaterialTheme.typography.labelLarge)
                 },
             )
         },
@@ -171,9 +191,18 @@ fun HomeScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    item { Spacer(Modifier.height(8.dp)) }
+                    item {
+                        Spacer(Modifier.height(8.dp))
+                        HomeHeroCard(
+                            email = (authState as? AuthUiState.Authenticated)?.email.orEmpty(),
+                            isWakeWordReady = deviceState.isWakeWordReady,
+                            onStartTalking = { onNavigateToVoiceSession(null) },
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        SectionLabel("Recent conversations")
+                    }
                     items(homeState.conversations, key = { it.id }) { conversation ->
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { value ->
@@ -211,12 +240,115 @@ fun HomeScreen(
                             )
                         }
                     }
-                    // Extra bottom space so the FAB doesn't cover the last item
-                    item { Spacer(Modifier.height(96.dp)) }
+                    item { Spacer(Modifier.height(120.dp)) }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun HomeHeroCard(
+    email: String,
+    isWakeWordReady: Boolean,
+    onStartTalking: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.surfaceVariant,
+                        MaterialTheme.colorScheme.surface,
+                    )
+                )
+            )
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(24.dp),
+            )
+            .padding(20.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Mic,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Column {
+                    Text(
+                        text = "Ready when inspiration hits",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = if (isWakeWordReady) {
+                            "Wake word and audio route are ready."
+                        } else {
+                            "Connect Meta glasses or Bluetooth audio for hands-free use."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                    )
+                }
+            }
+
+            Text(
+                text = "Speak an idea, refine it with Gervis, and come back when the work is ready.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                StateChip(state = if (isWakeWordReady) "active" else "idle")
+                if (email.isNotBlank()) {
+                    Text(
+                        text = email,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            Text(
+                text = "Start a new voice session",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable(onClick = onStartTalking),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.62f),
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+    )
 }
 
 // ── Hotword service ───────────────────────────────────────────────────────────
@@ -285,14 +417,16 @@ private fun ConversationCard(item: ConversationItem, onClick: () -> Unit) {
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -301,10 +435,9 @@ private fun ConversationCard(item: ConversationItem, onClick: () -> Unit) {
                 modifier = Modifier
                     .size(10.dp)
                     .clip(CircleShape)
-                    .background(stateColor(item.state)),
+                .background(stateColor(item.state)),
             )
 
-            // Content
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(
                     text = item.lastTurnSummary ?: "Voice conversation",
@@ -327,7 +460,13 @@ private fun ConversationCard(item: ConversationItem, onClick: () -> Unit) {
                 }
             }
 
-            // Resume badge
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.24f),
+                modifier = Modifier.size(14.dp),
+            )
+
             if (item.pendingResumeCount > 0) {
                 Box(
                     modifier = Modifier
@@ -373,7 +512,7 @@ private fun stateColor(state: String) = when (state) {
     "active"                -> MaterialTheme.colorScheme.secondary
     "awaiting_resume"       -> MaterialTheme.colorScheme.primary
     "awaiting_confirmation" -> MaterialTheme.colorScheme.tertiary
-    "running_job"           -> MaterialTheme.colorScheme.tertiary
+    "running_job"           -> MaterialTheme.colorScheme.primary
     else                    -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
 }
 

@@ -10,6 +10,66 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.10] - Existing-project edit reuse + dev-server URL handoff + data-only resume pushes
+
+**Modified files:** `tools/project_tools.py`, `tools/coding_tools.py`, `api/conversations.py`, `tools/openclaw_coding_tool.py`, `services/conversation_service.py`, `services/notification_service.py`
+
+#### Existing project edits now reuse the original workspace
+
+Previously, `lookup_project()` could find an existing project, but that metadata stopped at
+the lookup tool. The coding-job dispatch path only passed `{"prd": prd}` to OpenClaw, so
+follow-up edit requests could still be treated as brand-new builds and create a second folder.
+
+Fix:
+
+- `tools/project_tools.py` now stores the selected project in ADK session state as `selected_project`
+- `tools/coding_tools.py` now carries `existing_project` through both the pending PRD action and the queued coding job payload
+- `api/conversations.py` now preserves that same `existing_project` payload for the REST confirmation path, not just the voice-only path
+
+#### `openclaw_coding_tool.py` â€” explicit edit-vs-new-project execution prompts
+
+`tools/openclaw_coding_tool.py` now behaves differently depending on whether an existing
+project path was selected:
+
+- Existing project edit â€” tells OpenClaw to reuse the exact stored project path and not create a new slugged folder
+- New project build â€” still creates a new project under `settings.openclaw_projects_dir/<project_slug>/`
+
+It now also prefers the stored `last_openclaw_response_id` from the selected project for
+context chaining before falling back to the project registry lookup.
+
+#### OpenClaw prompt now includes dev-server startup instructions
+
+The OpenClaw system prompt now explicitly tells the coding agent to:
+
+1. run `npm install` inside the project folder
+2. run `npm run dev -- --host 0.0.0.0 --port 5173`
+3. switch to another free port if `5173` is already in use
+4. return the running app URL in the `URL:` line of the final response
+
+This applies to both new builds and edits of existing projects.
+
+#### `notification_service.py` â€” switch FCM to data-only pushes
+
+Background job notifications previously sent an FCM `notification` payload. On Android, that
+can be handled directly by the system tray while the app is backgrounded, which means
+`FcmService.onMessageReceived()` may not run. As a result, SpecTalk could not auto-resume the
+conversation and start speaking until the user tapped the notification.
+
+Fix:
+
+- push notifications are now sent as data-only FCM messages
+- `title` and `body` are included in the data payload so Android can still render the local notification itself
+
+This guarantees the Android app receives the event and can trigger the auto-resume flow.
+
+#### `conversation_service.py` â€” clear stale active conversations
+
+When a new voice WebSocket session starts, `set_conversation_active()` now sets all other
+`active` conversations for the same user back to `idle` before marking the current one
+`active`. This prevents stale multiple-`Active` rows from accumulating in the conversation list.
+
+---
+
 ### [Phase 5.9] - Gervis speaks first + cross-session project memory + turn-count fix
 
 **Modified files:** `ws/voice_handler.py`, `services/conversation_service.py`, `services/project_service.py` (new), `tools/project_tools.py` (new), `tools/openclaw_coding_tool.py`, `agents/orchestrator.py`, `db/models.py`, `config.py`, `migrations/versions/e5f2a3b8c1d7_user_projects.py` (new)

@@ -11,6 +11,7 @@ import com.google.firebase.messaging.RemoteMessage
 import com.spectalk.app.MainActivity
 import com.spectalk.app.R
 import com.spectalk.app.SpecTalkApplication
+import com.spectalk.app.device.ConnectedDeviceMonitor
 import com.spectalk.app.settings.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,13 +87,15 @@ class FcmService : FirebaseMessagingService() {
 
         showJobNotification(conversationId, title, body)
 
-        // Auto-open: if the user enabled this setting, navigate to the conversation
-        // immediately without requiring a notification tap.
+        // Auto-resume immediately when a wearable / earbuds route is active, or
+        // when the user explicitly enabled auto-open in Settings.
         //   • emitConversationId → NavGraph collects and navigates (app already in foreground)
         //   • startActivity       → brings app to foreground if backgrounded, then onNewIntent
         //                           re-emits the id (singleTop — no duplicate Activity created)
         // The notification is still shown so the user can reference or dismiss it.
-        if (AppPreferences.isAutoOpenOnNotification(this)) {
+        val shouldAutoResume = ConnectedDeviceMonitor.state.value.isWakeWordReady ||
+            AppPreferences.isAutoOpenOnNotification(this)
+        if (shouldAutoResume) {
             // Store in SharedPreferences first so the navigation survives background
             // activity start restrictions (Android 10+). When the app comes to the
             // foreground (via notification tap or direct launch), SpecTalkNavGraph

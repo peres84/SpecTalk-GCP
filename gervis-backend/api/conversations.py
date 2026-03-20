@@ -246,6 +246,7 @@ async def confirm_prd(
     if body.confirmed:
         # Extract PRD from the pending action payload
         prd = (pending_action.payload or {}).get("prd", {})
+        existing_project = (pending_action.payload or {}).get("existing_project")
         project_name = prd.get("project_name", "your project")
 
         # Create job row
@@ -259,7 +260,10 @@ async def confirm_prd(
             job_type="coding",
             conversation_id=conversation_id,
             user_id=job_user_id,
-            payload={"prd": prd},
+            payload={
+                "prd": prd,
+                "existing_project": existing_project,
+            },
         )
 
         # Resolve the pending action

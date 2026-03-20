@@ -7,6 +7,27 @@ Newest entries at the top.
 
 ## [Unreleased] — Phase 6: camera integration, gallery, sidebar navigation, single-conversation enforcement
 
+### Fixed
+
+#### Notification auto-resume now triggers immediately when wearable audio is connected
+- `notifications/FcmService.kt` now auto-resumes the target conversation immediately when a
+  Meta wearable or Bluetooth audio device is connected, even if the manual
+  `pref_auto_open_on_notification` setting is disabled.
+- This matches the expected hands-free flow: if the user is already wearing Meta glasses or
+  earbuds, a completed background job should reopen the conversation and let Gervis start
+  speaking without waiting for a notification tap.
+
+#### Home conversation list now refreshes on return to the screen
+- `ui/screens/HomeScreen.kt` now reloads conversations on `Lifecycle.Event.ON_RESUME`.
+- This fixes stale state in the list after returning from a voice session or notification flow,
+  where cards could keep showing `Active` even after the backend had already marked them `idle`.
+
+#### Multiple stale `Active` conversation cards fixed
+- Backend-side enforcement now clears other active conversations when a new session becomes
+  active, and the Android home screen now refreshes when resumed.
+- Result: the conversation list should no longer accumulate several `Active` rows that were
+  left over from previous sessions.
+
 ### Added
 
 #### `GlassesCameraManager` — Meta DAT camera capture
