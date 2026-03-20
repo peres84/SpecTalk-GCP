@@ -907,11 +907,23 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun confirmPrd(conversationId: String, confirmed: Boolean, changeRequest: String?) {
         Log.i(TAG, "confirmPrd called: conv=$conversationId confirmed=$confirmed")
+
+        // Dismiss the card immediately so the UI feels instant.  The backend
+        // call can take several seconds; if it fails we restore the card.
+        val savedPrd = _uiState.value.prdSummary
+        _uiState.update { it.copy(prdSummary = null) }
+        clearPrdSummary(conversationId)
+        if (!confirmed) {
+            clearConversationState(conversationId)
+            _uiState.update { it.copy(conversationState = "idle") }
+        }
+
         viewModelScope.launch {
             val jwt = getProductJwt()
             if (jwt.isBlank()) {
                 Log.w(TAG, "confirmPrd: no product JWT")
                 setError("Not signed in — please log in again.")
+                restorePrdCard(conversationId, savedPrd, confirmed)
                 return@launch
             }
             val networkHost = AppPreferences.getProjectNetworkHost(getApplication())
@@ -927,19 +939,19 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             val success = result.getOrDefault(false)
             Log.i(TAG, "confirmPrd result: success=$success error=${result.exceptionOrNull()?.message}")
 
-            if (success) {
-                // Optimistically dismiss the card — the WebSocket state_update will follow
-                _uiState.update { it.copy(prdSummary = null) }
-                clearPrdSummary(conversationId)
-                if (!confirmed) {
-                    // "Change" path: also clear the stored state so the fallback is hidden
-                    clearConversationState(conversationId)
-                    _uiState.update { it.copy(conversationState = "idle") }
-                }
-            } else {
+            if (!success) {
                 setError("Could not submit your response. Please try again.")
+                restorePrdCard(conversationId, savedPrd, confirmed)
             }
         }
+    }
+
+    /** Re-show the PRD card after a failed confirm attempt. */
+    private fun restorePrdCard(conversationId: String, prd: PrdSummary?, wasConfirmed: Boolean) {
+        if (prd == null) return
+        _uiState.update { it.copy(prdSummary = prd, conversationState = "awaiting_confirmation") }
+        storePrdSummary(conversationId, prd)
+        storeConversationState(conversationId, "awaiting_confirmation")
     }
 
     fun sendGlassesFrame(requestedByAgent: Boolean = false) {
