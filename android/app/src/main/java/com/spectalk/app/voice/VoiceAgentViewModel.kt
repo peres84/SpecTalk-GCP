@@ -48,7 +48,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     private var clientEventsJob: Job? = null
     private var connectTimeoutJob: Job? = null
     private var inactivityJob: Job? = null
-    private var cameraStateJob: Job? = null
+    private var glassesSessionStarted = false
     private var backgroundStopJob: Job? = null
 
     // Tracks whether we've sent ack-resume-event for the current session.
@@ -60,6 +60,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
 
     private var soundPool: SoundPool? = null
     private var activationSoundId: Int = 0
+    @Volatile private var activationSoundLoaded = false
+    @Volatile private var pendingActivationSound = false
     private var pendingUserTranscript: String? = null
     private var pendingAssistantTranscript: String? = null
 
@@ -70,6 +72,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     init {
         initActivationSound()
         observeConnectedDevices()
+        observeGlassesCameraReadiness()
 
         viewModelScope.launch {
             HotwordEventBus.wakeWordDetected.collect { startSession() }
@@ -183,19 +186,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 tailscaleHost = preferredNetworkHost,
             )
 
-            // Start glasses camera if Meta wearable is connected
-            if (ConnectedDeviceMonitor.state.value.hasMetaWearable) {
-                GlassesCameraManager.startSession(getApplication())
-                cameraStateJob = viewModelScope.launch {
-                    GlassesCameraManager.observeStreamState()
-                }
-                viewModelScope.launch {
-                    GlassesCameraManager.isReady.collect { ready ->
-                        _uiState.update { it.copy(isGlassesCameraReady = ready) }
-                        syncSessionCapabilities()
-                    }
-                }
-            }
+            syncGlassesCameraSession(ConnectedDeviceMonitor.state.value.hasMetaWearable)
         }
     }
 
@@ -211,9 +202,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         backendClient = null
         audioPlayer?.stop()
         audioPlayer = null
-        cameraStateJob?.cancel()
-        cameraStateJob = null
-        GlassesCameraManager.stopSession()
+        stopGlassesCameraSession()
         pendingUserTranscript = null
         pendingAssistantTranscript = null
 
@@ -657,6 +646,15 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                     .build()
             )
             .build()
+        pool.setOnLoadCompleteListener { _, sampleId, status ->
+            if (sampleId == activationSoundId && status == 0) {
+                activationSoundLoaded = true
+                if (pendingActivationSound) {
+                    pendingActivationSound = false
+                    pool.play(activationSoundId, 1f, 1f, 0, 0, 1f)
+                }
+            }
+        }
         soundPool = pool
         activationSoundId = runCatching {
             pool.load(getApplication(), R.raw.activation_sound, 1)
@@ -664,8 +662,10 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun playActivationSound() {
-        if (activationSoundId > 0) {
+        if (activationSoundId > 0 && activationSoundLoaded) {
             soundPool?.play(activationSoundId, 1f, 1f, 0, 0, 1f)
+        } else if (activationSoundId > 0) {
+            pendingActivationSound = true
         }
     }
 
@@ -674,8 +674,38 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             ConnectedDeviceMonitor.state.collect { state ->
                 audioPlayer?.setPreferSpeaker(!state.isWakeWordReady)
                 _uiState.update { it.copy(isWakeWordDeviceConnected = state.isWakeWordReady) }
+                syncGlassesCameraSession(state.hasMetaWearable)
                 syncSessionCapabilities()
             }
+        }
+    }
+
+    private fun observeGlassesCameraReadiness() {
+        viewModelScope.launch {
+            GlassesCameraManager.isReady.collect { ready ->
+                _uiState.update { it.copy(isGlassesCameraReady = ready) }
+                syncSessionCapabilities()
+            }
+        }
+    }
+
+    private fun syncGlassesCameraSession(hasMetaWearable: Boolean) {
+        if ((_uiState.value.isConnected || _uiState.value.isConnecting) && hasMetaWearable) {
+            if (!glassesSessionStarted) {
+                GlassesCameraManager.startSession(getApplication())
+                glassesSessionStarted = true
+            }
+        } else {
+            stopGlassesCameraSession()
+        }
+    }
+
+    private fun stopGlassesCameraSession() {
+        if (glassesSessionStarted) {
+            GlassesCameraManager.stopSession()
+            glassesSessionStarted = false
+        } else {
+            _uiState.update { it.copy(isGlassesCameraReady = false) }
         }
     }
 
@@ -947,6 +977,8 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         disconnect()
         soundPool?.release()
         soundPool = null
+        activationSoundLoaded = false
+        pendingActivationSound = false
         super.onCleared()
     }
 }

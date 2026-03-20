@@ -47,7 +47,7 @@ def _rewrite_project_url(project_url: str | None, preferred_network_host: str | 
     if not normalized_host:
         return project_url
 
-    current = urlparse(project_url)
+    current = urlparse(project_url if "://" in project_url else f"http://{project_url}")
     preferred = urlparse(normalized_host)
     if not current.hostname or not preferred.hostname:
         return project_url
@@ -60,10 +60,10 @@ def _rewrite_project_url(project_url: str | None, preferred_network_host: str | 
     return urlunparse((
         preferred.scheme or current.scheme or "http",
         netloc,
-        current.path,
-        current.params,
-        current.query,
-        current.fragment,
+        "/",
+        "",
+        "",
+        "",
     ))
 
 

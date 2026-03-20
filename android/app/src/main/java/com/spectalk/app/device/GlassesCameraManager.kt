@@ -11,9 +11,17 @@ import com.meta.wearable.dat.camera.types.StreamSessionState
 import com.meta.wearable.dat.camera.types.VideoQuality
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.selectors.AutoDeviceSelector
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import okio.ByteString
@@ -26,8 +34,12 @@ sealed interface CaptureResult {
 
 object GlassesCameraManager {
     private const val TAG = "GlassesCameraManager"
+    private const val READY_TIMEOUT_MS = 5_000L
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var session: StreamSession? = null
+    private var stateJob: Job? = null
+    private var warmStreamJob: Job? = null
     private val _isReady = MutableStateFlow(false)
     val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
 
@@ -44,14 +56,24 @@ object GlassesCameraManager {
         )
         session = newSession
         Log.i(TAG, "StreamSession started")
-    }
 
-    // Observe the stream state and update isReady.
-    // Call this in a coroutine scope after startSession().
-    suspend fun observeStreamState() {
-        session?.state?.collect { state ->
-            _isReady.value = state == StreamSessionState.STREAMING
-            Log.d(TAG, "StreamSession state: $state")
+        stateJob?.cancel()
+        stateJob = scope.launch {
+            newSession.state.collect { state ->
+                _isReady.value = state == StreamSessionState.STREAMING
+                Log.d(TAG, "StreamSession state: $state")
+            }
+        }
+
+        // Keep the DAT video stream actively collected so the session can transition
+        // all the way to STREAMING and remain warm for still-photo capture.
+        warmStreamJob?.cancel()
+        warmStreamJob = scope.launch {
+            runCatching {
+                newSession.videoStream.collect { _ -> }
+            }.onFailure { e ->
+                Log.w(TAG, "Video stream collector stopped: ${e.message}", e)
+            }
         }
     }
 
@@ -59,7 +81,15 @@ object GlassesCameraManager {
     // an arbitrary streamed frame into a JPEG ourselves.
     suspend fun capturePhoto(): CaptureResult {
         val s = session ?: return CaptureResult.Failure("No active stream session")
-        if (!_isReady.value) return CaptureResult.Failure("Stream not ready")
+        if (!_isReady.value) {
+            Log.i(TAG, "capturePhoto waiting for stream readiness")
+            val ready = withTimeoutOrNull(READY_TIMEOUT_MS) {
+                isReady.filter { it }.first()
+            } != null
+            if (!ready) {
+                return CaptureResult.Failure("Stream not ready")
+            }
+        }
         return try {
             s.capturePhoto().fold(
                 onSuccess = { photoData ->
@@ -108,6 +138,10 @@ object GlassesCameraManager {
     }
 
     fun stopSession() {
+        stateJob?.cancel()
+        stateJob = null
+        warmStreamJob?.cancel()
+        warmStreamJob = null
         session?.close()  // close() is the lifecycle-ending call; there is no stop()
         session = null
         _isReady.value = false

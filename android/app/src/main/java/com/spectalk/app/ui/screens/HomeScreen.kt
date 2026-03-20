@@ -72,6 +72,7 @@ import com.spectalk.app.conversations.HomeViewModel
 import com.spectalk.app.device.ConnectedDeviceMonitor
 import com.spectalk.app.hotword.HotwordEventBus
 import com.spectalk.app.hotword.HotwordService
+import com.spectalk.app.hotword.HotwordServiceStarter
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -95,7 +96,7 @@ fun HomeScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         if (results[Manifest.permission.RECORD_AUDIO] == true) {
-            startHotwordService(context)
+            HotwordServiceStarter.startIfPermitted(context)
         }
     }
 
@@ -110,7 +111,11 @@ fun HomeScreen(
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (needed.isEmpty()) startHotwordService(context) else permissionLauncher.launch(needed.toTypedArray())
+        if (needed.isEmpty()) {
+            HotwordServiceStarter.startIfPermitted(context)
+        } else {
+            permissionLauncher.launch(needed.toTypedArray())
+        }
     }
 
     LaunchedEffect(Unit) {

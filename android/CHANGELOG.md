@@ -9,6 +9,30 @@ Newest entries at the top.
 
 ### Fixed
 
+#### Meta DAT glasses capture now warms the stream before photo capture
+- `device/GlassesCameraManager.kt` now keeps the DAT `videoStream` actively collected so the
+  session can reach `STREAMING` instead of staying stuck in a not-ready state
+- `capturePhoto()` now waits briefly for the stream to become ready before failing, which makes
+  the in-app glasses capture and agent-requested capture much more reliable at session start
+
+#### Meta glasses camera readiness now updates correctly during an active voice chat
+- `voice/VoiceAgentViewModel.kt` now starts the DAT camera session when Meta connectivity appears
+  during an already-open conversation instead of only checking once at initial connect time
+- Result: the app no longer stays permanently in `glasses camera not ready` just because the
+  wearable connection arrived slightly later than the voice WebSocket
+
+#### Wake-word listening now starts from app bootstrap, not only after visiting Home
+- `SpecTalkApplication.kt` now starts the hotword foreground service on app startup when mic
+  permission has already been granted
+- `hotword/HotwordServiceStarter.kt` centralizes that startup path so wake word is available even
+  if the user has not opened the Home screen first in the current app process
+
+#### Wake activation beep is now more reliable on the first connection
+- `voice/VoiceAgentViewModel.kt` now waits for the `SoundPool` sample to finish loading before
+  attempting to play the activation sound
+- this fixes the race where the session connected correctly but the user heard no beep because
+  the sound asset was still loading
+
 #### Meta glasses capture can now be triggered by the agent and lands in chat like a normal image
 - the Android voice client now handles backend `request_visual_capture` control messages during
   live listening sessions

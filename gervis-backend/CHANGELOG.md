@@ -10,6 +10,34 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.15] - Resume-status correction + strict preferred-host URL rebuilding
+
+**Modified files:** `ws/voice_handler.py`, `agents/orchestrator.py`,
+`tools/openclaw_coding_tool.py`
+
+#### Resume handling now explicitly treats completed jobs as completed, not pending
+
+- the resume injection prompt in `ws/voice_handler.py` now states authoritatively that returned
+  jobs have already completed and must not be described as pending, queued, or still running
+- resuming a conversation with pending resume events now also flips the conversation state to
+  `completed` so backend state better matches what the user is hearing
+
+#### Gervis now trusts fresh completion status over older conversation context
+
+- `agents/orchestrator.py` now tells the assistant to trust the newest system/session status
+  message when a background job has completed
+- this reduces cases where older running-job context leaks into the spoken reply after the user
+  reopens a finished build or research result
+
+#### Project URLs now use the user-configured host plus the OpenClaw runtime port
+
+- `tools/openclaw_coding_tool.py` no longer reuses OpenClaw's returned host or path when the
+  user has configured a preferred Tailscale/domain host
+- the backend now extracts the actual runtime port from the returned URL and rebuilds the shared
+  project URL with the user-provided host/domain as the canonical base
+
+---
+
 ### [Phase 5.14] - Agent-triggered glasses capture + OpenClaw connectivity guidance
 
 **Modified files:** `tools/visual_capture_tool.py`, `services/visual_capture_channels.py`,

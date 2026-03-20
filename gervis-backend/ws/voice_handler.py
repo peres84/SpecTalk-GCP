@@ -54,6 +54,7 @@ from services.conversation_service import (
     persist_turn,
     set_conversation_active,
     set_conversation_idle,
+    set_conversation_state,
 )
 from services.gemini_live_client import gemini_live_client
 import services.location_channels as location_channels
@@ -487,13 +488,16 @@ async def voice_websocket(
                             break
                 summaries.append(summary)
             session_prompt = (
+                "[SYSTEM - authoritative resume status] "
                 "The user has returned specifically to hear the result of background work. "
-                "Do not start with a generic greeting and do not ask how you can help before "
-                "sharing the result. Start immediately with the completed project news. "
-                f"The following completed while they were gone: {' '.join(summaries)} "
+                "At least one background job has ALREADY COMPLETED. It is not pending, queued, "
+                "or still running. Do not greet first, and do not ask how you can help before "
+                "sharing the finished result. Start immediately with the completion news. "
+                f"The completed result(s): {' '.join(summaries)} "
                 "Mention the exact project URL once when available, then briefly offer next steps."
             )
             await acknowledge_all_resume_events(conversation_id)
+            await set_conversation_state(conversation_id, "completed")
             logger.info(
                 f"[{conversation_id}] Injecting resume context for {len(pending_events)} event(s)"
             )
@@ -511,7 +515,7 @@ async def voice_websocket(
             else:
                 session_prompt = (
                     "A new voice session has started. "
-                    "Greet the user briefly and ask what they'd like to build or explore today."
+                    "Greet the user briefly and ask what how you can help today."
                 )
                 logger.info(f"[{conversation_id}] Injecting new-session greeting prompt")
 

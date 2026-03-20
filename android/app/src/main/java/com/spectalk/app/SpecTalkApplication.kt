@@ -8,6 +8,7 @@ import com.meta.wearable.dat.core.Wearables
 import com.spectalk.app.auth.TokenRepository
 import com.spectalk.app.config.BackendConfig
 import com.spectalk.app.device.ConnectedDeviceMonitor
+import com.spectalk.app.hotword.HotwordServiceStarter
 import com.spectalk.app.location.UserLocationRepository
 import com.spectalk.app.notifications.FcmService
 
@@ -26,6 +27,7 @@ class SpecTalkApplication : Application() {
         runCatching { Wearables.initialize(this) }
             .onFailure { e -> Log.w(TAG, "Wearables.initialize failed: ${e.message}") }
         ConnectedDeviceMonitor.start(this)
+        HotwordServiceStarter.startIfPermitted(this)
         val nm = getSystemService(NotificationManager::class.java)
         FcmService.createNotificationChannels(nm)
     }
