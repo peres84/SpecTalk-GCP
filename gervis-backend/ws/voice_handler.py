@@ -8,7 +8,7 @@ Protocol:
                  {"type": "text_input", "text": "..."}
                  {"type": "image", "mime_type": "image/jpeg", "data": "<base64>"}
                  {"type": "session_capabilities", "glasses_camera_ready": bool,
-                  "listening_enabled": bool}
+                  "glasses_capture_available": bool, "listening_enabled": bool}
                  {"type": "visual_capture_status", "status": "failed", "reason": "..."}
                  {"type": "location_response", "latitude": float, "longitude": float,
                   "accuracy_meters": float (optional), "location_label": str (optional)}
@@ -183,10 +183,14 @@ async def _upstream_task(
                         session_id=conversation_id,
                     )
                     session.state["glasses_camera_ready"] = bool(msg.get("glasses_camera_ready", False))
+                    session.state["glasses_capture_available"] = bool(
+                        msg.get("glasses_capture_available", False)
+                    )
                     session.state["listening_enabled"] = bool(msg.get("listening_enabled", True))
                     logger.debug(
                         f"[{conversation_id}] session_capabilities received: "
                         f"glasses_camera_ready={session.state['glasses_camera_ready']} "
+                        f"glasses_capture_available={session.state['glasses_capture_available']} "
                         f"listening_enabled={session.state['listening_enabled']}"
                     )
 
@@ -213,6 +217,11 @@ async def _upstream_task(
                                 f"[{conversation_id}] send_content unavailable — visual capture failure "
                                 "was not injected into the session"
                             )
+                elif msg_type == "visual_capture_debug":
+                    logger.info(
+                        f"[{conversation_id}] visual_capture_debug: "
+                        f"{msg.get('message', '')}"
+                    )
 
                 elif msg_type == "location_response":
                     normalized = normalize_location_context(msg)
@@ -442,6 +451,7 @@ async def voice_websocket(
         if preferred_network_host:
             session.state["preferred_network_host"] = preferred_network_host
         session.state.setdefault("glasses_camera_ready", False)
+        session.state.setdefault("glasses_capture_available", False)
         session.state.setdefault("listening_enabled", True)
 
         async def _send_request_location() -> None:

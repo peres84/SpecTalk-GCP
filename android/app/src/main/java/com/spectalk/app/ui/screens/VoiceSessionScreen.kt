@@ -150,7 +150,7 @@ fun VoiceSessionScreen(
         }
     }
 
-    val sendImageFromBestSource = {
+    fun sendImageFromBestSource() {
         if (deviceState.hasMetaWearable) {
             when {
                 !metaAccessState.isRegistered -> {
@@ -179,19 +179,17 @@ fun VoiceSessionScreen(
                         }
                     }
                 }
-                uiState.isConnected && uiState.isGlassesCameraReady -> {
+                uiState.isConnected -> {
                     viewModel.sendGlassesFrame()
                 }
                 else -> {
                     scope.launch {
                         snackbarHostState.showSnackbar(
-                            "Meta glasses camera is still getting ready. Please try again in a moment."
+                            "Join the conversation first so SpecTalk can capture from your glasses."
                         )
                     }
                 }
             }
-        } else if (uiState.isConnected && uiState.isGlassesCameraReady) {
-            viewModel.sendGlassesFrame()
         } else {
             launchPhoneCamera()
         }
@@ -396,7 +394,7 @@ fun VoiceSessionScreen(
                     onDraftChanged = viewModel::setDraftText,
                     onSendText = viewModel::sendDraftText,
                     onToggleListening = viewModel::toggleListeningEnabled,
-                    onSendImage = sendImageFromBestSource,
+                    onSendImage = ::sendImageFromBestSource,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -1118,7 +1116,8 @@ private fun TurnBubble(turn: ConversationTurn) {
 
 private fun sessionModeLabel(uiState: VoiceSessionUiState): String = when {
     uiState.isConnected && !uiState.isListeningEnabled -> "Text mode"
-    uiState.isGlassesCameraReady -> "Meta camera ready"
+    uiState.isGlassesCameraReady -> "Meta camera active"
+    uiState.isMetaRegistered && uiState.hasMetaCameraPermission -> "Meta capture available"
     uiState.isMetaRegistered && !uiState.hasMetaCameraPermission -> "Grant Meta camera access"
     uiState.isConnected && !uiState.isWakeWordDeviceConnected -> "Phone mic + speaker"
     uiState.isWakeWordDeviceConnected -> "Wearable audio"

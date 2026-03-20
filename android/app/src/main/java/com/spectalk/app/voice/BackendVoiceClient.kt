@@ -202,13 +202,20 @@ class BackendVoiceClient(
 
     fun sendSessionCapabilities(
         glassesCameraReady: Boolean,
+        glassesCaptureAvailable: Boolean,
         listeningEnabled: Boolean,
     ) {
         if (!isConnected) return
+        Log.d(
+            TAG,
+            "WS -> session_capabilities ready=$glassesCameraReady " +
+                "captureAvailable=$glassesCaptureAvailable listening=$listeningEnabled",
+        )
         webSocket?.send(
             JSONObject()
                 .put("type", "session_capabilities")
                 .put("glasses_camera_ready", glassesCameraReady)
+                .put("glasses_capture_available", glassesCaptureAvailable)
                 .put("listening_enabled", listeningEnabled)
                 .toString(),
         )
@@ -221,6 +228,16 @@ class BackendVoiceClient(
                 .put("type", "visual_capture_status")
                 .put("status", "failed")
                 .put("reason", reason)
+                .toString(),
+        )
+    }
+
+    fun sendVisualCaptureDebug(message: String) {
+        if (!isConnected) return
+        webSocket?.send(
+            JSONObject()
+                .put("type", "visual_capture_debug")
+                .put("message", message)
                 .toString(),
         )
     }

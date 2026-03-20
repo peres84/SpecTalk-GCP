@@ -22,6 +22,23 @@ def unregister(conversation_id: str) -> None:
     logger.debug(f"[{conversation_id}] visual capture channel unregistered")
 
 
+def prepare_wait(conversation_id: str) -> bool:
+    """Arm the capture channel before a request is sent to the app.
+
+    This avoids racing with a very fast capture response that may arrive before
+    wait_for_capture() starts waiting.
+    """
+    channel = _channels.get(conversation_id)
+    if not channel:
+        logger.debug(f"[{conversation_id}] no visual capture channel to prepare")
+        return False
+
+    channel.clear()
+    _capture_state.pop(conversation_id, None)
+    logger.debug(f"[{conversation_id}] visual capture channel prepared")
+    return True
+
+
 def notify_success(conversation_id: str, *, source: str | None = None) -> None:
     _capture_state[conversation_id] = {
         "ok": True,
@@ -49,9 +66,6 @@ async def wait_for_capture(conversation_id: str, timeout: float = 8.0) -> dict |
     if not channel:
         logger.debug(f"[{conversation_id}] no visual capture channel")
         return None
-
-    channel.clear()
-    _capture_state.pop(conversation_id, None)
 
     try:
         await asyncio.wait_for(channel.wait(), timeout=timeout)
