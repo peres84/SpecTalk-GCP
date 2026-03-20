@@ -217,15 +217,18 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun disconnect(resumeHotword: Boolean = true) {
-        if (resumeHotword) HotwordEventBus.resume()
         cancelTimers()
         stopMicrophone(sendEndOfSpeech = true)
         clientEventsJob?.cancel()
         clientEventsJob = null
         backendClient?.close()
         backendClient = null
+        // Stop the player (and restore audio route from MODE_IN_COMMUNICATION)
+        // BEFORE resuming the hotword service — Vosk's AudioRecord can fail to
+        // capture properly while MODE_IN_COMMUNICATION is still active.
         audioPlayer?.stop()
         audioPlayer = null
+        if (resumeHotword) HotwordEventBus.resume()
         stopGlassesCameraSession()
         pendingUserTranscript = null
         pendingAssistantTranscript = null
@@ -554,13 +557,14 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             is VoiceClientEvent.Disconnected -> {
                 connectTimeoutJob?.cancel()
                 cancelTimers()
-                HotwordEventBus.resume()
                 stopMicrophone(sendEndOfSpeech = false)
                 clientEventsJob?.cancel()
                 clientEventsJob = null
                 backendClient = null
+                // Stop player and restore audio route before resuming hotword.
                 audioPlayer?.stop()
                 audioPlayer = null
+                HotwordEventBus.resume()
                 pendingUserTranscript = null
                 pendingAssistantTranscript = null
                 _uiState.update {
@@ -614,10 +618,11 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         val recorder = audioRecorder ?: AndroidAudioRecorder().also { audioRecorder = it }
 
         val started = recorder.start(viewModelScope) { chunk ->
-            // Always forward mic audio — hardware AEC (VOICE_COMMUNICATION source +
-            // AcousticEchoCanceler) handles echo suppression at the correct layer.
-            // Muting the mic here would prevent barge-in: Gemini would never hear the
-            // user's voice, never send `interrupted`, and the player would never clear.
+            // Send mic audio unconditionally — hardware AEC (VOICE_COMMUNICATION
+            // audio source + VOICE_COMMUNICATION AudioTrack + AcousticEchoCanceler)
+            // handles echo suppression.  Both recorder and player share the same
+            // VoIP audio path so AEC can use playback as its reference signal.
+            // Muting the mic here would prevent barge-in.
             lastAudioSentTime = System.currentTimeMillis()
             client.sendAudioChunk(chunk)
         }

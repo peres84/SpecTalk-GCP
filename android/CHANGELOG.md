@@ -5,6 +5,41 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — Fix echo loop and wake word resume after voice session
+
+### Fixed
+
+#### Gervis hears its own voice — echo loop on Meta glasses and phone speaker
+- **Root cause:** `PcmAudioPlayer` was using `AudioAttributes.USAGE_MEDIA` for the `AudioTrack`.
+  Hardware AEC needs both the `AudioRecord` (mic) and `AudioTrack` (speaker) on the same VoIP
+  audio path to use playback as its far-end reference signal. `USAGE_MEDIA` routes through a
+  different pipeline where AEC has no reference, so the mic picks up Gervis's spoken output and
+  streams it back to Gemini as user speech.
+- **Fix:** Changed `AudioTrack` usage back to `AudioAttributes.USAGE_VOICE_COMMUNICATION` so
+  both mic (`AudioSource.VOICE_COMMUNICATION`) and speaker share the same VoIP audio path that
+  Android's hardware AEC is designed for. The existing `configureRoute()` method already handles
+  correct speaker routing: `setCommunicationDevice(speaker)` forces the loudspeaker when no
+  Bluetooth/wearable is connected, `clearCommunicationDevice()` lets BT route naturally when
+  Meta glasses or earbuds are active.
+- Mic audio is sent unconditionally (no gating during playback) so barge-in works — Gemini's
+  server-side VAD handles echo suppression the same way the native Gemini, ChatGPT, and Meta AI
+  apps do on the same hardware.
+- **File:** `audio/PcmAudioPlayer.kt`
+
+#### Wake word (Vosk) fails to resume after a voice session ends
+- **Root cause:** `disconnect()` and the `VoiceClientEvent.Disconnected` handler called
+  `HotwordEventBus.resume()` before `audioPlayer?.stop()`. The hotword service observed the
+  resume immediately and tried to start Vosk's `SpeechService` (which creates its own
+  `AudioRecord`), but `MODE_IN_COMMUNICATION` was still active from `PcmAudioPlayer`'s
+  `configureRoute()`. Vosk's mic capture failed or behaved incorrectly under that audio mode.
+- **Fix:** Reordered both `disconnect()` and the `Disconnected` event handler so that the audio
+  player is stopped (and `restoreRoute()` clears `MODE_IN_COMMUNICATION`) before
+  `HotwordEventBus.resume()` is called. The `SessionTimeout` handler already had the correct
+  order and was not changed.
+- **Files:** `voice/VoiceAgentViewModel.kt`
+
+---
+
 ## [Unreleased] — Phase 6: camera integration, gallery, sidebar navigation, single-conversation enforcement
 
 ### Fixed

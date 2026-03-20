@@ -42,9 +42,15 @@ class PcmAudioPlayer(context: Context) {
 
         val minBufferSize = AudioTrack.getMinBufferSize(SAMPLE_RATE_HZ, CHANNEL_MASK, AUDIO_FORMAT)
         val playbackAttributes = AudioAttributes.Builder()
-            // Use MEDIA so Android screen recorders / playback-capture APIs can
-            // include Gervis's spoken output as internal app audio.
-            .setUsage(AudioAttributes.USAGE_MEDIA)
+            // VOICE_COMMUNICATION so the AudioTrack shares the same VoIP audio
+            // path as the VOICE_COMMUNICATION AudioRecord.  Hardware AEC needs
+            // both endpoints on the same path to use playback as a reference
+            // signal — without this, AEC has no reference and echo leaks through.
+            // Routing is handled by configureRoute(): MODE_IN_COMMUNICATION +
+            // setCommunicationDevice(speaker) forces loudspeaker output when no
+            // BT/wearable is connected; clearCommunicationDevice() lets BT route
+            // naturally via HFP when glasses/earbuds are active.
+            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .apply {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
