@@ -44,20 +44,34 @@ def _extract_runtime_port(*values: str | None) -> int | None:
     """Extract the runtime port from OpenClaw output.
 
     Accepts raw URL-ish strings or free-form text and returns the first plausible
-    app port it can find.
+    app port it can find.  Handles patterns like:
+      - http://localhost:5173
+      - 0.0.0.0:3000
+      - port 5173
+      - PORT: 5173
     """
     for value in values:
         raw = (value or "").strip()
         if not raw:
             continue
-        parsed = urlparse(raw if "://" in raw else f"http://{raw}")
-        if parsed.port:
-            return parsed.port
-        match = re.search(r":(\d{2,5})(?:/|$)", raw) or re.search(
-            r"\bport\s+(\d{2,5})\b",
+        # Try parsing as a single URL first (works for short single-line values)
+        if "\n" not in raw:
+            parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+            if parsed.port:
+                return parsed.port
+        # Search for host:port patterns (localhost:5173, 0.0.0.0:3000, etc.)
+        match = re.search(
+            r"(?:localhost|127\.0\.0\.1|0\.0\.0\.0|://[^/:]+):(\d{2,5})(?:[/\s]|$)",
             raw,
-            re.IGNORECASE,
         )
+        if match:
+            return int(match.group(1))
+        # Search for colon-port at line boundaries
+        match = re.search(r":(\d{2,5})(?:/|$)", raw)
+        if match:
+            return int(match.group(1))
+        # Search for "port NNNN" in prose
+        match = re.search(r"\bport\s+(\d{2,5})\b", raw, re.IGNORECASE)
         if match:
             return int(match.group(1))
     return None
@@ -327,6 +341,11 @@ async def execute_coding_job(
         elif line.startswith("URL:"):
             raw_project_url = line[4:].strip()
             project_port = _extract_runtime_port(raw_project_url, line)
+
+    # Fallback: if OpenClaw didn't return a PORT: line, scan the full response
+    # for common dev-server URLs like http://localhost:5173 or 0.0.0.0:3000.
+    if project_port is None:
+        project_port = _extract_runtime_port(full_text)
 
     project_url = _build_project_url(
         preferred_network_host=preferred_network_host,

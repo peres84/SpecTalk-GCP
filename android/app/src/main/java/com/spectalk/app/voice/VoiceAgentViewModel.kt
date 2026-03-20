@@ -906,14 +906,16 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
      * @param changeRequest  non-null only when confirmed=false; the user's change text
      */
     fun confirmPrd(conversationId: String, confirmed: Boolean, changeRequest: String?) {
+        Log.i(TAG, "confirmPrd called: conv=$conversationId confirmed=$confirmed")
         viewModelScope.launch {
             val jwt = getProductJwt()
             if (jwt.isBlank()) {
+                Log.w(TAG, "confirmPrd: no product JWT")
                 setError("Not signed in — please log in again.")
                 return@launch
             }
             val networkHost = AppPreferences.getProjectNetworkHost(getApplication())
-            val success = runCatching {
+            val result = runCatching {
                 conversationRepository.confirmPrd(
                     jwt = jwt,
                     conversationId = conversationId,
@@ -921,7 +923,9 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                     changeRequest = changeRequest,
                     networkHost = networkHost.ifBlank { null },
                 )
-            }.getOrDefault(false)
+            }
+            val success = result.getOrDefault(false)
+            Log.i(TAG, "confirmPrd result: success=$success error=${result.exceptionOrNull()?.message}")
 
             if (success) {
                 // Optimistically dismiss the card — the WebSocket state_update will follow

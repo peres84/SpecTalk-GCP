@@ -5,6 +5,30 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — Fix OpenClaw project URL construction and PRD card improvements
+
+### Fixed
+
+#### OpenClaw returns file path instead of a usable project URL
+- **Root cause:** OpenClaw's response often embeds the dev-server port inside free-form text
+  (e.g. `http://localhost:5173`) rather than returning a clean `PORT:` line. The port extractor
+  only checked structured `PORT:` / `URL:` lines, so the port was `None` and only the file path
+  artifact was returned to the user.
+- **Fix:** Added a fallback scan of the full OpenClaw response text when no explicit `PORT:` line
+  is found. Improved `_extract_runtime_port()` to match `localhost:NNNN`, `0.0.0.0:NNNN`, and
+  `://host:NNNN` patterns in multi-line text. The port is then combined with the user's preferred
+  network host (from Settings → Project Links) to construct the final URL.
+- **File:** `gervis-backend/tools/openclaw_coding_tool.py`
+
+#### PRD confirmation card now scrollable on smaller screens
+- The card content `Column` now uses `verticalScroll` so the "Build it" and "Change something"
+  buttons are always reachable even when the PRD summary is long.
+- Added diagnostic logging to `confirmPrd()` to trace button-tap confirmations and identify
+  failures.
+- **Files:** `ui/components/PrdConfirmationCard.kt`, `voice/VoiceAgentViewModel.kt`
+
+---
+
 ## [Unreleased] — Fix echo loop and wake word resume after voice session
 
 ### Fixed
