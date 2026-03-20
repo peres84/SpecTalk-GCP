@@ -30,7 +30,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -69,6 +73,17 @@ fun VoiceSessionScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Phone camera — TakePicturePreview returns a Bitmap thumbnail
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        bitmap?.let {
+            val out = java.io.ByteArrayOutputStream()
+            it.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out)
+            viewModel.sendCameraImage(out.toByteArray())
+        }
+    }
 
     LaunchedEffect(conversationId) { viewModel.startSession(conversationId) }
 
@@ -124,8 +139,32 @@ fun VoiceSessionScreen(
                     Text(
                         text = "Gervis",
                         style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(end = 52.dp), // balance the back button
                     )
+                    Spacer(Modifier.weight(1f))
+                    // Right-side icon in title bar:
+                    // • Glasses connected → send a glasses still frame to Gervis
+                    // • Connected without glasses (e.g. AirPods) → open phone camera
+                    // • Not connected → placeholder to keep title centered
+                    when {
+                        uiState.isConnected && uiState.isGlassesCameraReady ->
+                            IconButton(onClick = { viewModel.sendGlassesFrame() }) {
+                                Icon(
+                                    imageVector = Icons.Default.CameraAlt,
+                                    contentDescription = "Send glasses view to Gervis",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        uiState.isConnected ->
+                            IconButton(onClick = { cameraLauncher.launch(null) }) {
+                                Icon(
+                                    imageVector = Icons.Default.PhotoCamera,
+                                    contentDescription = "Take photo for Gervis",
+                                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
+                                )
+                            }
+                        else ->
+                            Spacer(Modifier.size(48.dp))
+                    }
                 }
 
                 // ── Orb hero area ────────────────────────────────────────────

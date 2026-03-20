@@ -137,9 +137,15 @@ Reference for all UI and audio components: `samples/gemini-voice-agent/`
       - On timeout (10s of silence from both sides): sends `{"type": "end_of_speech"}`, closes
         WebSocket, resumes `HotwordService`
 - [x] Bluetooth headset monitoring — restart Vosk on BT connect/disconnect
+- [x] `ConnectedDeviceMonitor` — gates `HotwordService` activation; wake-word only runs when a
+      Meta wearable or Bluetooth audio device is connected
 - [ ] Meta Glasses video preview (optional, port from sample if needed)
 - [x] Notification channel setup for push notifications (FCM — `FcmService` + two channels created
       in `SpecTalkApplication.onCreate()`)
+- [x] **Session timeout UX** — `BackendVoiceClient` handles `{"type":"session_timeout"}` message;
+      `VoiceAgentViewModel` shows "session reached time limit" + tap-to-reconnect UI
+- [x] Proactive location send on connect — `VoiceAgentViewModel` fetches + sends GPS coordinates
+      immediately on WebSocket connect so Gervis has location context from first turn
 
 ### Acceptance Criteria
 
@@ -257,6 +263,12 @@ WebSocket bridge (`WS /ws/voice/{conversation_id}`) is live. `search_tool` and `
 - [x] `DELETE /conversations/{id}` — FK-safe cascade delete (resume_events → pending_actions → turns → assets → jobs → conversation)
 - [x] `last_turn_summary` null serialization fix — explicit `Optional[str] = None` defaults in Pydantic models
 
+#### Backend — Session Timeout Handling
+- [x] `ws/voice_handler.py` — detect 1011 WebSocket close with "Failed to run inference" /
+      "session" keywords (Gemini Live ~10-min model limit)
+- [x] Send `{"type": "session_timeout", "message": "..."}` to phone before closing
+- [x] Phone displays tap-to-reconnect UI (not treated as an error)
+
 #### Backend — Bug Fixes (ADK 1.1.1 compatibility)
 - [x] `RunConfig` Pydantic validation — unknown fields (`session_resumption`, `realtime_input_config`) injected conditionally via `model_fields` inspection
 - [x] `types.ActivityEnd()` crash — removed `send_realtime(ActivityEnd())` call; ADK 1.1.1 only accepts `types.Blob` in `send_realtime`; VAD handles silence detection
@@ -370,7 +382,7 @@ notified when work completes, and resume naturally.
 ---
 
 ## Phase 5 — Coding Mode and OpenClaw Integration
-**Status: `🔲 IN PROGRESS`**
+**Status: `✅ APPROVED`**
 
 Goal: User can describe a coding project by voice. The backend shapes the requirements, asks
 clarifying questions, requests confirmation, and dispatches to OpenClaw as a background job.
@@ -413,7 +425,38 @@ clarifying questions, requests confirmation, and dispatches to OpenClaw as a bac
       - Enabled independently of OTel — just set `OPIK_API_KEY` in `.env`
       - `config.py`: `opik_api_key`, `opik_workspace`, `opik_project_name` settings
       - `cloudbuild.yaml`: `OPIK_API_KEY` secret + `OPIK_WORKSPACE`/`OPIK_PROJECT_NAME` env vars
-- [ ] Test full coding mode lifecycle: voice request → questions → PRD → confirm → job → notify → resume
+
+#### Per-User Project Registry
+- [x] `db/models.py` — `UserProject` ORM model (`project_id`, `user_id`, `project_name`, `slug`, `path`, `url`, `openclaw_context`)
+- [x] `migrations/versions/e5f2a3b8c1d7_user_projects.py` — migration for `user_projects` table
+- [x] `services/project_service.py` — `upsert_user_project()`, `find_user_project()` with fuzzy slug matching
+- [x] `tools/project_tools.py` — `lookup_project(name, tool_context)` ADK tool: slugifies spoken name, queries registry, returns found/not-found with all project names for disambiguation
+- [x] Orchestrator: `lookup_project` added to Gervis tool list
+
+#### Encrypted Integration Credentials
+- [x] `db/models.py` — `UserIntegration` ORM model (`integration_id`, `user_id`, `service_name`, `encrypted_url`, `encrypted_token`)
+- [x] `migrations/versions/d4e1f8a2c5b9_user_integrations.py` — migration for `user_integrations` table
+- [x] `services/encryption_service.py` — Fernet symmetric encryption for credential storage
+- [x] `api/integrations.py` — `GET/POST /integrations` endpoints for storing/retrieving credentials
+- [x] `android/integrations/IntegrationsRepository.kt` — Android REST client for integrations API
+- [x] `INTEGRATION_ENCRYPTION_KEY` secret in Secret Manager + `config.py`
+
+#### OpenClaw Callback
+- [x] `api/internal/openclaw_callback.py` — `POST /internal/openclaw/callback` webhook handler
+      for job completion notifications from OpenClaw
+- [x] Registered in `main.py` router
+
+#### Location Context
+- [x] `services/location_context_service.py` — persist and retrieve per-user location context
+- [x] `services/location_channels.py` — per-conversation location request routing channel
+- [x] `ws/voice_handler.py` — handles `location_response` control message from phone, persists via
+      `location_context_service`, also sends `request_location` to phone when Gervis tool needs GPS
+
+#### Session Logger
+- [x] `services/session_logger.py` — structured logging for ADK session events (turn start/end,
+      tool calls, audio events) keyed by `conversation_id`
+
+- [x] Full coding mode lifecycle tested: voice request → clarifications → PRD card → confirm → job → notify → resume
 
 ### Acceptance Criteria
 
@@ -422,21 +465,29 @@ clarifying questions, requests confirmation, and dispatches to OpenClaw as a bac
 - Gervis presents a PRD summary and asks for confirmation
 - User confirms → job dispatches to OpenClaw → notification on complete → resume with result
 
-### ⏸ Awaiting approval to proceed to Phase 6
+### ✅ Approved — proceeding to Phase 6
 
 ---
 
 ## Phase 6 — Advanced Features
-**Status: `🔲 NOT STARTED`**
+**Status: `🔄 IN PROGRESS`**
 
 Goal: describe-image, long-term memory, artifact browser in app, richer multimodal handling.
 
 ### Tasks
 
-- [ ] `tools/describe_image_tool.py` — validate an image, submit job, return artifact refs 
+- [x] Backend: `image` control message handling — `voice_handler.py` already forwards `image`
+      type JSON messages as `Blob(data=b64decode(data), mime_type="image/jpeg")` to Gemini Live
+- [x] Android: `device/GlassesCameraManager.kt` — DAT SDK `StreamSession` wrapper; on-demand
+      photo capture → JPEG compress → ready state via `StreamSessionState.STREAMING`
+- [x] Android: `BackendVoiceClient.sendImage()` — base64 encodes JPEG, sends `{"type":"image",...}`
+- [x] Android: `VoiceSessionUiState.isGlassesCameraReady` flag
+- [x] Android: `VoiceAgentViewModel` — starts/stops `GlassesCameraManager` with voice session,
+      observes `isReady` state, exposes `sendGlassesFrame()`
+- [x] Android: `VoiceSessionScreen` — "Describe this" camera button in title bar; shown only when
+      `isConnected && isGlassesCameraReady`
 - [ ] `tools/memory_tool.py` — save/retrieve durable user memory, session summarization
 - [ ] `tools/openclaw_assistant_tool.py` (optional) — lightweight OpenClaw assistance
-- [ ] Android: `image` control message sending from Meta Glasses frames and phone camera
 - [ ] Android: `asset_saved` control message handling → show asset confirmation in UI
 - [ ] Android: artifact browser screen — list job artifacts, open/share them
 - [ ] Backend: session summarization into long-term memory on conversation close
@@ -460,5 +511,5 @@ Goal: describe-image, long-term memory, artifact browser in app, richer multimod
 - [x] Phase 2 approved
 - [x] Phase 3 approved
 - [x] Phase 4 approved
-- [ ] Phase 5 approved
+- [x] Phase 5 approved
 - [ ] Phase 6 approved

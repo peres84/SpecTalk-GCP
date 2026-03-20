@@ -50,6 +50,10 @@ async def request_clarification(question: str, tool_context: ToolContext) -> str
         except Exception:
             pass
 
+    logger.info(
+        f"[{conversation_id}] request_clarification INVOKED: question={question[:80]}"
+    )
+
     count = state.get("clarification_count", 0)
     state["clarification_count"] = count + 1
     state["pending_clarification"] = question
@@ -66,9 +70,6 @@ async def request_clarification(question: str, tool_context: ToolContext) -> str
         )
         asyncio.create_task(set_conversation_state(conversation_id, "coding_mode"))
 
-    logger.info(
-        f"[{conversation_id}] request_clarification #{count + 1}: {question[:80]}"
-    )
     return question
 
 
@@ -109,6 +110,10 @@ async def generate_and_confirm_prd(
         except Exception:
             pass
 
+    logger.info(
+        f"[{conversation_id}] generate_and_confirm_prd INVOKED: idea={project_idea[:80]}"
+    )
+
     # Parse clarifications
     clarifications: dict = {}
     if clarifications_json:
@@ -116,10 +121,6 @@ async def generate_and_confirm_prd(
             clarifications = json.loads(clarifications_json)
         except (json.JSONDecodeError, TypeError):
             logger.warning(f"[{conversation_id}] Could not parse clarifications_json")
-
-    logger.info(
-        f"[{conversation_id}] Generating PRD for: {project_idea[:80]}"
-    )
 
     # Call the PRD shaper (uses Gemini + Google Search grounding)
     prd = await generate_prd(project_idea, clarifications)

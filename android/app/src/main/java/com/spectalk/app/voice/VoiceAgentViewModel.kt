@@ -14,7 +14,10 @@ import com.spectalk.app.audio.AndroidAudioRecorder
 import com.spectalk.app.audio.PcmAudioPlayer
 import com.spectalk.app.config.BackendConfig
 import com.spectalk.app.conversations.ConversationRepository
+import com.spectalk.app.device.CaptureResult
 import com.spectalk.app.device.ConnectedDeviceMonitor
+import com.spectalk.app.device.GlassesCameraManager
+import com.spectalk.app.gallery.GalleryRepository
 import com.spectalk.app.hotword.HotwordEventBus
 import com.spectalk.app.location.UserLocationContext
 import com.spectalk.app.settings.AppPreferences
@@ -29,7 +32,7 @@ import kotlinx.coroutines.launch
 class VoiceAgentViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val TAG = "VoiceAgentViewModel"
-        private const val INACTIVITY_TIMEOUT_MS = 10_000L
+        private const val INACTIVITY_TIMEOUT_MS = 20_000L
         private const val CONNECT_TIMEOUT_MS = 12_000L
     }
 
@@ -45,6 +48,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
     private var clientEventsJob: Job? = null
     private var connectTimeoutJob: Job? = null
     private var inactivityJob: Job? = null
+    private var cameraStateJob: Job? = null
 
     // Tracks whether we've sent ack-resume-event for the current session.
     // Reset on each new session so the ack fires exactly once per reconnect.
@@ -159,6 +163,19 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             client.connect(resolvedConversationId)
+
+            // Start glasses camera if Meta wearable is connected
+            if (ConnectedDeviceMonitor.state.value.hasMetaWearable) {
+                GlassesCameraManager.startSession(getApplication())
+                cameraStateJob = viewModelScope.launch {
+                    GlassesCameraManager.observeStreamState()
+                }
+                viewModelScope.launch {
+                    GlassesCameraManager.isReady.collect { ready ->
+                        _uiState.update { it.copy(isGlassesCameraReady = ready) }
+                    }
+                }
+            }
         }
     }
 
@@ -172,6 +189,9 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
         backendClient = null
         audioPlayer?.stop()
         audioPlayer = null
+        cameraStateJob?.cancel()
+        cameraStateJob = null
+        GlassesCameraManager.stopSession()
 
         _uiState.update {
             it.copy(
@@ -179,6 +199,7 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
                 isConnected = false,
                 isMicStreaming = false,
                 statusMessage = "Disconnected",
+                isGlassesCameraReady = false,
             )
         }
     }
@@ -519,6 +540,33 @@ class VoiceAgentViewModel(application: Application) : AndroidViewModel(applicati
             } else {
                 setError("Could not submit your response. Please try again.")
             }
+        }
+    }
+
+    fun sendGlassesFrame() {
+        val client = backendClient ?: return
+        viewModelScope.launch {
+            when (val result = GlassesCameraManager.capturePhoto()) {
+                is CaptureResult.Success -> {
+                    client.sendImage(result.jpegBytes)
+                    GalleryRepository.saveImage(getApplication(), result.jpegBytes, "glasses")
+                    Log.i(TAG, "Glasses frame sent (${result.jpegBytes.size} bytes)")
+                }
+                is CaptureResult.Failure -> {
+                    Log.w(TAG, "Glasses capture failed: ${result.reason}")
+                    setError("Could not capture from glasses: ${result.reason}")
+                }
+            }
+        }
+    }
+
+    /** Send a JPEG captured from the phone camera to Gervis and save it to the gallery. */
+    fun sendCameraImage(jpegBytes: ByteArray) {
+        val client = backendClient ?: return
+        viewModelScope.launch {
+            GalleryRepository.saveImage(getApplication(), jpegBytes, "camera")
+            client.sendImage(jpegBytes)
+            Log.i(TAG, "Camera image sent (${jpegBytes.size} bytes)")
         }
     }
 

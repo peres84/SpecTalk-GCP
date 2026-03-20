@@ -147,6 +147,17 @@ class BackendVoiceClient(
         webSocket?.send(payload.toString())
     }
 
+    /** Send a JPEG image frame (e.g. from Meta glasses) to Gervis for visual understanding. */
+    fun sendImage(jpegBytes: ByteArray) {
+        if (!isConnected) return
+        val b64 = android.util.Base64.encodeToString(jpegBytes, android.util.Base64.NO_WRAP)
+        val payload = JSONObject()
+            .put("type", "image")
+            .put("mime_type", "image/jpeg")
+            .put("data", b64)
+        webSocket?.send(payload.toString())
+    }
+
     /** Signal barge-in (user interrupted Gervis). */
     fun sendInterrupt() {
         if (!isConnected) return

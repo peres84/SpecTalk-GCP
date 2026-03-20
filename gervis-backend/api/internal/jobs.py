@@ -61,7 +61,7 @@ async def execute_job(
             detail="Only callable from Cloud Tasks",
         )
 
-    from services.job_service import update_job_status
+    from services.job_service import update_job_status, get_job_by_id
     from services.notification_service import send_push_notification, get_user_push_token
     from services.resume_event_service import create_resume_event
     from services.control_channels import send_control_message
@@ -75,6 +75,18 @@ async def execute_job(
     logger.info(
         f"[{conversation_id}] Executing job {job_id} type={body.job_type}"
     )
+
+    # Idempotency guard: Cloud Tasks retries on backend restart (redeploy kills
+    # in-flight jobs). If the job already reached a terminal state from a previous
+    # attempt, return 200 immediately so Cloud Tasks stops retrying and does not
+    # fire a duplicate FCM notification.
+    existing_job = await get_job_by_id(job_id)
+    if existing_job and existing_job.status in ("completed", "failed"):
+        logger.info(
+            f"[{conversation_id}] Job {job_id} already in terminal state "
+            f"'{existing_job.status}' — skipping duplicate execution"
+        )
+        return {"status": "already_complete", "job_id": job_id}
 
     # Mark job as running and notify phone if connected
     await update_job_status(job_id, "running")

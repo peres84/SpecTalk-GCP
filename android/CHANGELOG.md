@@ -5,6 +5,111 @@ Newest entries at the top.
 
 ---
 
+## [Unreleased] — Phase 6: camera integration, gallery, sidebar navigation, single-conversation enforcement
+
+### Added
+
+#### `GlassesCameraManager` — Meta DAT camera capture
+- New `object GlassesCameraManager` in `device/GlassesCameraManager.kt` wrapping the DAT
+  `StreamSession` for on-demand still-frame capture from Meta Ray-Ban glasses.
+- `startSession(context)` / `stopSession()` manage the `StreamSession` lifecycle.
+  `stopSession()` calls `close()` (correct DAT SDK method; `stop()` does not exist).
+- `observeStreamState()` collects `StreamSession.state` and drives `_isReady: StateFlow<Boolean>`;
+  only `true` while state is `StreamSessionState.STREAMING`.
+- `capturePhoto()` uses `videoStream.first()` to get a decoded `VideoFrame` (DAT `PhotoData`
+  is an opaque marker interface with no pixel data fields and cannot be used for bytes).
+  The `ByteBuffer` from `VideoFrame` is compressed to JPEG at 85% quality via
+  `Bitmap.createBitmap` + `compress`.
+- **File:** `device/GlassesCameraManager.kt`
+- **Dependency added:** `mwdat-camera` (`libs.versions.toml` + `app/build.gradle.kts`)
+
+#### `GalleryRepository` — local JPEG storage
+- New `object GalleryRepository` in `gallery/GalleryRepository.kt`.
+- `saveImage(context, jpegBytes, source)` writes a JPEG to `filesDir/gallery/` with a
+  filename of `<source>_<timestamp>.jpg` (e.g. `glasses_1711000000000.jpg`, `phone_...`).
+- `listImages(context)` returns all `GalleryImage(file, source, timestamp)` items sorted by
+  modification time, newest first.
+- `deleteImage(file)` deletes the file.
+- **File:** `gallery/GalleryRepository.kt`
+
+#### `GalleryViewModel` — gallery state management
+- Loads images on `load()` using `Dispatchers.IO`; exposes `images: StateFlow<List<GalleryImage>>`.
+- `delete(image)` deletes via `GalleryRepository` then reloads.
+- **File:** `gallery/GalleryViewModel.kt`
+
+#### `GalleryScreen` — image gallery UI
+- New `GalleryScreen` composable in `ui/screens/GalleryScreen.kt`.
+- `LazyVerticalGrid(GridCells.Fixed(2))` with 8dp gutters; each cell is a card with the image,
+  source badge ("Glasses" / "Phone" pill), relative timestamp, and a delete `IconButton` overlay.
+- Async bitmap loading via `produceState<ImageBitmap?>` on `Dispatchers.IO`.
+- Empty state (no images) shows a centred Camera icon with helper text.
+- Hamburger `TopAppBar` calls `onOpenDrawer`.
+- **File:** `ui/screens/GalleryScreen.kt`
+
+#### `AppDrawer` — sidebar navigation drawer
+- New `AppDrawer` composable in `ui/components/AppDrawer.kt` using `ModalDrawerSheet`.
+- Header: Mic icon (primary colour, 56dp circle), "SpecTalk" in `titleLarge`, "Powered by Gervis"
+  at 50% alpha, user email at 30% alpha.
+- Nav items: Conversations (`Icons.Rounded.Mic`), Gallery (`Icons.Default.PhotoLibrary`),
+  Settings (`Icons.Default.Settings`) — active item uses `selectedContainerColor = primary.copy(alpha=0.12f)`.
+- Destructive "Sign out" `TextButton` (error colour) pinned at the very bottom.
+- **File:** `ui/components/AppDrawer.kt`
+
+#### Phone camera capture in voice session
+- `VoiceSessionScreen` adds a `rememberLauncherForActivityResult(TakePicturePreview)` launcher.
+  On result, the Bitmap thumbnail is compressed to JPEG (80% quality) and passed to
+  `viewModel.sendCameraImage(jpegBytes)`.
+- New `VoiceAgentViewModel.sendCameraImage(jpegBytes)`: saves image to gallery
+  (`GalleryRepository.saveImage(..., "phone")`), then sends via `BackendVoiceClient.sendImage()`.
+- `BackendVoiceClient.sendImage(jpegBytes)`: base64-encodes the JPEG bytes and sends
+  `{"type":"image","mime_type":"image/jpeg","data":"<base64>"}` over the voice WebSocket.
+- **Files:** `ui/screens/VoiceSessionScreen.kt`, `voice/VoiceAgentViewModel.kt`,
+  `voice/BackendVoiceClient.kt`
+- **Permission added:** `android.permission.CAMERA` in `AndroidManifest.xml`
+
+### Changed
+
+#### `VoiceSessionScreen` — adaptive camera button in title bar
+- The right-side icon in the title bar is now a 3-way switch:
+  - **Glasses connected** (`isConnected && isGlassesCameraReady`) → `CameraAlt` icon; tapping
+    calls `viewModel.sendGlassesFrame()` (captures a DAT glasses frame).
+  - **Connected, no glasses** (`isConnected`) → `PhotoCamera` icon; tapping opens the phone
+    camera via `cameraLauncher.launch(null)`.
+  - **Not connected** → `Spacer(48.dp)` placeholder keeps the title centred.
+- `VoiceAgentViewModel.sendGlassesFrame()` now also saves the captured frame to gallery
+  (`GalleryRepository.saveImage(..., "glasses")`) in addition to sending it to the backend.
+- **Files:** `ui/screens/VoiceSessionScreen.kt`, `voice/VoiceAgentViewModel.kt`,
+  `voice/VoiceSessionUiState.kt` (added `isGlassesCameraReady: Boolean = false`)
+
+#### `SpecTalkNavGraph` — `ModalNavigationDrawer` wraps all drawer routes
+- `ModalNavigationDrawer` now wraps the entire `NavHost`. `drawerState` is hoisted here and
+  `openDrawer()` / `closeDrawer()` are passed to `HomeScreen` and `GalleryScreen` as lambdas.
+- `gesturesEnabled` is `true` only while `currentRoute` is in
+  `drawerRoutes = setOf(Home, Gallery, Settings)` — swipe gesture disabled on auth and voice screens.
+- `AppDrawer` is conditionally rendered only when `showDrawer` is true to avoid composing it
+  over the auth screens.
+- Added `Gallery` composable destination.
+- **File:** `navigation/SpecTalkNavGraph.kt`
+
+#### `HomeScreen` — hamburger menu replaces top-right icon buttons
+- Removed `onNavigateToSettings` and `onSignOut` parameters (now handled by the drawer).
+- Added `onOpenDrawer: () -> Unit` parameter.
+- `TopAppBar.navigationIcon` changed from a logo placeholder to `Icons.Filled.Menu` (`IconButton`
+  calling `onOpenDrawer`). The settings and logout `IconButton`s on the right side are removed.
+- **File:** `ui/screens/HomeScreen.kt`
+
+#### `Screen.kt` — `Gallery` destination added
+- New `data object Gallery : Screen { override val route = "gallery" }`.
+- **File:** `navigation/Screen.kt`
+
+#### Inactivity timeout extended to 20 seconds
+- `INACTIVITY_TIMEOUT_MS` in `VoiceAgentViewModel` changed from `10_000L` → `20_000L`.
+- Rationale: 10 s was too aggressive — users thinking aloud or pausing mid-sentence triggered
+  premature disconnects. 20 s gives enough headroom while still auto-closing idle sessions.
+- **File:** `voice/VoiceAgentViewModel.kt`
+
+---
+
 ## [Unreleased] — Fix wake notification sound + live wake word settings
 
 ### Fixed

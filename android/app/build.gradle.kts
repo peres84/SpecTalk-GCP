@@ -93,6 +93,7 @@ dependencies {
 
     // Meta Wearables DAT SDK
     implementation(libs.mwdat.core)
+    implementation(libs.mwdat.camera)
 }
 
 // ---------------------------------------------------------------------------

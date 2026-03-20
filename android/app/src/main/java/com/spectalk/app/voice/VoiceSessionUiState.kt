@@ -25,4 +25,6 @@ data class VoiceSessionUiState(
      * Cleared on running_job or idle state transitions.
      */
     val prdSummary: PrdSummary? = null,
+    /** True when the Meta glasses StreamSession is STREAMING and a photo can be captured. */
+    val isGlassesCameraReady: Boolean = false,
 )

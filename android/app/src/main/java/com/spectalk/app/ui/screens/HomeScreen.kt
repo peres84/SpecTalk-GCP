@@ -24,9 +24,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -74,9 +73,8 @@ import java.time.temporal.ChronoUnit
 @Composable
 fun HomeScreen(
     authViewModel: AuthViewModel,
-    onNavigateToSettings: () -> Unit,
+    onOpenDrawer: () -> Unit,
     onNavigateToVoiceSession: (conversationId: String?) -> Unit,
-    onSignOut: () -> Unit,
     homeViewModel: HomeViewModel = viewModel(),
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
@@ -127,22 +125,12 @@ fun HomeScreen(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                 ),
-                actions = {
-                    IconButton(onClick = onNavigateToSettings) {
+                navigationIcon = {
+                    IconButton(onClick = onOpenDrawer) {
                         Icon(
-                            Icons.Filled.Settings,
-                            contentDescription = "Settings",
+                            Icons.Filled.Menu,
+                            contentDescription = "Open menu",
                             tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                        )
-                    }
-                    IconButton(onClick = {
-                        authViewModel.signOut()
-                        onSignOut()
-                    }) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Logout,
-                            contentDescription = "Sign out",
-                            tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
                         )
                     }
                 },

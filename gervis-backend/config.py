@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     # Used for: Gemini Live voice session, Google Search grounding, Google Maps grounding
     gemini_api_key: str = ""
     adk_app_name: str = "spectalk"
-    gemini_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    gemini_model: str = "gemini-2.0-flash-live-001"
 
     # Phase 4: Background jobs, Cloud Tasks, and FCM notifications
     # GCP project ID — required for Cloud Tasks in production
