@@ -2,12 +2,16 @@
 
 Flow:
   1. Fetch user's OpenClaw credentials from DB (decrypted in-process)
-  2. POST the PRD to POST /v1/responses with stream=True
-  3. Consume SSE stream, collecting response.output_text.delta events
-  4. Return assembled result when response.completed arrives
+  2. Look up the last OpenClaw response_id for this conversation (for context chaining)
+  3. POST the PRD to POST /v1/responses with stream=True
+     - If a previous_response_id exists, pass it so OpenClaw remembers prior context
+  4. Consume SSE stream, collecting response.output_text.delta events
+  5. Capture the response_id from response.completed and persist it on the job row
+  6. Return assembled result when streaming ends
 
-The job is synchronous from the executor's perspective — we wait for OpenClaw
-to finish streaming and return the result directly. No callback needed.
+Context chaining: each completed job stores its OpenClaw response_id in job.artifacts.
+The next coding job for the same conversation looks up the most recent response_id and
+passes it as previous_response_id, giving OpenClaw full context of prior work.
 """
 
 import json
@@ -19,6 +23,29 @@ logger = logging.getLogger(__name__)
 
 # Total time budget for a coding job (OpenClaw may take several minutes)
 _OPENCLAW_TIMEOUT = 1800  # 30 minutes
+
+
+async def _get_last_response_id(conversation_id: str) -> str | None:
+    """Return the most recent OpenClaw response_id for this conversation, if any."""
+    from sqlalchemy import select, desc
+    from db.database import AsyncSessionLocal
+    from db.models import Job
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Job)
+            .where(Job.conversation_id == conversation_id)
+            .where(Job.job_type == "coding")
+            .where(Job.status == "completed")
+            .order_by(desc(Job.created_at))
+            .limit(1)
+        )
+        job = result.scalar_one_or_none()
+        if job and job.artifacts:
+            for artifact in job.artifacts:
+                if artifact.get("type") == "openclaw_response_id":
+                    return artifact.get("url")
+    return None
 
 
 async def execute_coding_job(
@@ -53,22 +80,46 @@ async def execute_coding_job(
 
     openclaw_url, openclaw_token = credentials
     endpoint = f"{openclaw_url.rstrip('/')}/v1/responses"
-    session_key = f"spectalk-{job_id}"
+    session_key = f"spectalk-{conversation_id}"  # per-conversation, not per-job
+
+    # ── 2. Look up prior context ──────────────────────────────────────────────
+    previous_response_id = await _get_last_response_id(conversation_id)
+    if previous_response_id:
+        logger.info(
+            f"[{conversation_id}] Chaining from previous OpenClaw response: {previous_response_id}"
+        )
 
     prd_json = json.dumps(prd, indent=2)
     prompt = (
         f"Build the following project according to this PRD.\n\n"
         f"PRD:\n{prd_json}\n\n"
-        f"When done, provide a brief summary of what was built."
+        f"IMPORTANT — when the build is complete, do the following:\n"
+        f"1. Create the project inside a folder named after the project (use snake_case).\n"
+        f"2. Deploy it using nginx so it is accessible over HTTP.\n"
+        f"3. Reply with ONLY these two lines (no extra explanation):\n"
+        f"   PATH: <exact absolute path to the project folder>\n"
+        f"   URL: <http URL where the project is accessible>\n"
+        f"   If nginx deployment failed, omit the URL line and only include PATH."
     )
+
+    # ── 3. Build request body ─────────────────────────────────────────────────
+    request_body: dict = {
+        "model": "openclaw",
+        "input": prompt,
+        "stream": True,
+    }
+    if previous_response_id:
+        request_body["previous_response_id"] = previous_response_id
 
     logger.info(
         f"[{conversation_id}] Sending coding job {job_id} to OpenClaw "
-        f"(project='{project_name}', session_key={session_key})"
+        f"(project='{project_name}', session_key={session_key}, "
+        f"chained={previous_response_id is not None})"
     )
 
-    # ── 2. Stream POST /v1/responses ──────────────────────────────────────────
+    # ── 4. Stream POST /v1/responses ──────────────────────────────────────────
     full_text = ""
+    openclaw_response_id = None
 
     async with httpx.AsyncClient(timeout=_OPENCLAW_TIMEOUT) as client:
         async with client.stream(
@@ -80,11 +131,7 @@ async def execute_coding_job(
                 "x-openclaw-agent-id": "main",
                 "x-openclaw-session-key": session_key,
             },
-            json={
-                "model": "openclaw",
-                "input": prompt,
-                "stream": True,
-            },
+            json=request_body,
         ) as resp:
             resp.raise_for_status()
 
@@ -104,23 +151,56 @@ async def execute_coding_job(
                 if event_type == "response.output_text.delta":
                     full_text += event.get("delta", "")
 
+                elif event_type == "response.completed":
+                    openclaw_response_id = event.get("response", {}).get("id")
+
                 elif event_type == "error":
                     error_msg = event.get("message", "Unknown OpenClaw error")
                     raise RuntimeError(f"OpenClaw error: {error_msg}")
 
     logger.info(
         f"[{conversation_id}] OpenClaw job {job_id} complete "
-        f"({len(full_text)} chars)"
+        f"({len(full_text)} chars, response_id={openclaw_response_id})"
     )
 
-    # ── 3. Build result ───────────────────────────────────────────────────────
-    # Trim to a reasonable spoken length
-    spoken = full_text.strip()
-    if len(spoken) > 500:
-        spoken = spoken[:497] + "..."
+    # ── 5. Parse PATH and URL from response ───────────────────────────────────
+    project_path = None
+    project_url = None
+
+    for line in full_text.splitlines():
+        line = line.strip()
+        if line.startswith("PATH:"):
+            project_path = line[5:].strip()
+        elif line.startswith("URL:"):
+            project_url = line[4:].strip()
+
+    logger.info(
+        f"[{conversation_id}] OpenClaw job {job_id} — "
+        f"path={project_path} url={project_url}"
+    )
+
+    # ── 6. Build result ───────────────────────────────────────────────────────
+    artifacts = []
+    if openclaw_response_id:
+        # Store response_id so the next job can chain from it
+        artifacts.append({"type": "openclaw_response_id", "url": openclaw_response_id, "label": "OpenClaw response ID"})
+    if project_url:
+        artifacts.append({"type": "url", "url": project_url, "label": f"{project_name} (live)"})
+    if project_path:
+        artifacts.append({"type": "path", "url": project_path, "label": f"{project_name} (path)"})
+
+    if project_url:
+        spoken = f"Your {project_name} project is ready and live at {project_url}"
+        display = f"{project_name} deployed — {project_url}"
+    elif project_path:
+        spoken = f"Your {project_name} project has been built. The files are at {project_path}"
+        display = f"{project_name} built — {project_path}"
+    else:
+        spoken = f"Your {project_name} project has been built by OpenClaw."
+        display = f"OpenClaw finished building {project_name}."
 
     return {
-        "spoken_summary": spoken or f"Your {project_name} project has been built by OpenClaw.",
-        "display_summary": f"OpenClaw finished building {project_name}.",
-        "artifacts": [],
+        "spoken_summary": spoken,
+        "display_summary": display,
+        "artifacts": artifacts,
     }

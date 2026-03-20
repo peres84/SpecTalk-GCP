@@ -10,6 +10,49 @@ Entries are ordered newest-first within each phase.
 
 ---
 
+### [Phase 5.4] - OpenClaw context chaining + nginx deploy + path/URL parsing
+
+**Modified files:** `tools/openclaw_coding_tool.py`
+
+---
+
+#### `tools/openclaw_coding_tool.py` — context chaining, deploy instructions, result parsing
+
+**Context chaining via `previous_response_id`:**
+
+Each completed coding job now stores its OpenClaw `response_id` in `job.artifacts`
+(`type: "openclaw_response_id"`). The next coding job for the same conversation looks
+up the most recent stored ID and passes it as `previous_response_id` in the request
+body, giving OpenClaw full memory of prior work.
+
+New helper `_get_last_response_id(conversation_id)` queries the DB for the most recent
+completed coding job in the conversation and extracts the stored response ID.
+
+Session key changed from `spectalk-{job_id}` → `spectalk-{conversation_id}` so all
+jobs in the same conversation share one OpenClaw thread.
+
+**nginx deploy instruction in prompt:**
+
+OpenClaw is now instructed to:
+1. Create the project in a snake_case folder
+2. Deploy it via nginx over HTTP
+3. Reply with exactly two lines: `PATH: <absolute path>` and `URL: <http url>`
+   (URL line omitted if nginx deployment failed)
+
+**PATH/URL parsing:**
+
+Result builder now parses `PATH:` and `URL:` from the OpenClaw response text.
+Artifacts returned:
+- `openclaw_response_id` — for context chaining on follow-up jobs
+- `url` — live HTTP URL (if nginx succeeded)
+- `path` — absolute folder path on the VPS
+
+Spoken summary:
+- Deploy succeeded → *"Your project is ready and live at http://..."*
+- Deploy failed → *"Files are at /home/pj/.openclaw/workspace/..."*
+
+---
+
 ### [Phase 5.3] - OpenClaw OpenResponses API (SSE streaming, synchronous)
 
 **Modified files:** `tools/openclaw_coding_tool.py`, `api/internal/jobs.py`
