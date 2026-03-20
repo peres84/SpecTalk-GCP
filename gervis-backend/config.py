@@ -14,6 +14,18 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/spectalk"
 
+    @field_validator("*", mode="before")
+    @classmethod
+    def strip_whitespace(cls, v):
+        """Strip trailing whitespace/newlines from all string secrets.
+
+        Secrets stored via Secret Manager on Windows (or via echo) often
+        include a trailing \\r\\n which causes httpx header validation errors.
+        """
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
     @field_validator("database_url", mode="before")
     @classmethod
     def fix_asyncpg_ssl(cls, v: str) -> str:
