@@ -50,6 +50,20 @@ No screen required at any step. The entire workflow runs through voice and your 
 
 ---
 
+## Meta Glasses Image Workflow
+
+When a voice session is already open and Meta glasses are connected, the top-right camera icon
+in the voice session captures a single still frame from the glasses and sends it to Gervis.
+After that, ask something like "What do you see?" or "Describe this."
+
+Current behavior:
+
+- It is a single tap in the app UI, not a press-and-hold gesture
+- It does not currently use the physical glasses button as the trigger
+- If glasses are not available, the same action falls back to the phone camera
+
+---
+
 ## Key Features
 
 | Feature | Description |
