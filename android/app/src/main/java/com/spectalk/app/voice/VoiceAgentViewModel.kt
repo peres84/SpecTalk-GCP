@@ -19,6 +19,7 @@ import com.spectalk.app.hotword.HotwordEventBus
 import com.spectalk.app.location.UserLocationContext
 import com.spectalk.app.settings.AppPreferences
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
