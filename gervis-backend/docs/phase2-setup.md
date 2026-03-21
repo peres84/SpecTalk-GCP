@@ -187,7 +187,7 @@ FIREBASE_PROJECT_ID=spectalk-488516
 FIREBASE_SERVICE_ACCOUNT_JSON={}
 
 # JWT
-JWT_SECRET=3e865eb9024b6c0be7629880910af56805fef3e707c420afa2ca1a2dee44eb28
+JWT_SECRET=<generate-with: python3 -c "import secrets; print(secrets.token_hex(32))">
 JWT_ALGORITHM=HS256
 JWT_EXPIRE_HOURS=720
 
